@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset:; media-src 'self' asset:; style-src 'self'; script-src 'self'" />
+    <title>SynVid</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main aria-labelledby="app-title">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <h1 id="app-title">SynVid</h1>
+        <nav aria-label="Workspace">
+          <button class="nav-item" aria-current="page" type="button">Create</button>
+          <button class="nav-item" type="button" disabled aria-describedby="story-note">Story</button>
+          <p id="story-note" class="sr-only">Story Mode is planned for a later stage.</p>
+          <button id="library-button" class="nav-item" type="button">Library</button>
+        </nav>
+        <button id="recovery-button" class="nav-item settings" type="button">Recovery Center</button>
+      </aside>
+
+      <section class="compose" aria-labelledby="compose-title">
+        <header class="panel-heading">
+          <div><p class="eyebrow">CREATE VIDEO</p><h2 id="compose-title">Compose</h2></div>
+          <p id="connection" class="status" role="status" aria-live="polite">Connecting to worker…</p>
+        </header>
+        <label for="prompt">Describe your video</label>
+        <textarea id="prompt" maxlength="4000" placeholder="A yellow flower gently moving in a spring breeze" autofocus></textarea>
+        <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
+
+        <fieldset>
+          <legend>Generation mode</legend>
+          <div class="chips" role="radiogroup" aria-label="Generation mode">
+            <button type="button" class="chip selected" role="radio" aria-checked="true">Text to video</button>
+            <button type="button" class="chip" role="radio" aria-checked="false" disabled aria-describedby="image-note">Image to video</button>
+          </div>
+          <p id="image-note" class="field-help">Image to video is enabled only after a separately validated input profile.</p>
+        </fieldset>
+
+        <section class="variants" aria-labelledby="variants-title">
+          <div class="section-heading"><h3 id="variants-title">Variants</h3><p id="variant-note">No generated variants yet.</p></div>
+          <ol id="variant-list" class="variant-list"></ol>
+        </section>
+
+        <section class="result" aria-labelledby="result-title">
+          <h3 id="result-title">Current selection</h3>
+          <p id="result-message">No completed output in this window yet.</p>
+        </section>
+      </section>
+
+      <section class="controls" aria-labelledby="controls-title">
+        <div>
+          <p class="eyebrow">VALIDATED CONTROLS</p><h2 id="controls-title">Controls</h2>
+          <dl class="facts">
+            <div><dt>Model</dt><dd>LTX Video</dd></div>
+            <div><dt>Profile</dt><dd id="profile">Awaiting measured profile</dd></div>
+            <div><dt>Native FPS</dt><dd id="fps">—</dd></div>
+          </dl>
+          <fieldset>
+            <legend>Generation recipe</legend>
+            <div id="recipe-buttons" class="recipe-buttons" role="radiogroup" aria-label="Generation recipe">
+              <button type="button" data-recipe="Draft" role="radio" aria-checked="false">Draft</button>
+              <button type="button" data-recipe="Balanced" role="radio" aria-checked="true">Balanced</button>
+              <button type="button" data-recipe="High" role="radio" aria-checked="false">High</button>
+            </div>
+            <p id="recipe-note" class="field-help">Balanced is the only measured LTX recipe currently available.</p>
+          </fieldset>
+          <details id="advanced">
+            <summary>Advanced</summary>
+            <p id="advanced-note" class="field-help">No custom overrides are available until they pass the same measured-profile gate. This protects output validity.</p>
+            <button id="reset-preset" class="text-button" type="button">Reset to Balanced preset</button>
+          </details>
+          <label for="seed">Seed</label>
+          <div class="seed-row"><input id="seed" type="number" min="0" max="2147483647" value="42" inputmode="numeric" /><button id="random-seed" type="button">Randomize</button></div>
+          <div class="history-row" aria-label="Draft history"><button id="undo" type="button">Undo</button><button id="redo" type="button">Redo</button></div>
+          <p id="form-error" class="error" role="alert" hidden></p>
+        </div>
+        <div class="action-area">
+          <p id="job-status" role="status" aria-live="polite">Ready when the measured profile is available.</p>
+          <button id="generate" class="generate" type="button" disabled>Generate video</button>
+          <button id="cancel" class="secondary" type="button" hidden>Cancel generation</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="onboarding" aria-labelledby="onboarding-title">
+      <h2 id="onboarding-title">Before you create</h2>
+      <p>SynVid runs generation locally. Models are stored in Application Support, can require substantial disk space and are never downloaded without an explicit confirmation.</p>
+      <p>The initial LTX profile is constrained to combinations measured on this Mac. No media has been rendered while this page is open.</p>
+      <form method="dialog"><button id="complete-onboarding" class="generate" value="continue" type="submit">Continue to SynVid</button></form>
+    </dialog>
+    <dialog id="recovery-dialog" aria-labelledby="recovery-title">
+      <h2 id="recovery-title">Recovery Center</h2>
+      <p id="recovery-preview">Checking recoverable state…</p>
+      <p class="field-help">Recovery deletes only incomplete files in SynVid’s temporary output area and clears abandoned reservations. Completed outputs are never changed.</p>
+      <div class="dialog-actions"><button id="run-recovery" class="generate" type="button">Recover incomplete work</button><button class="secondary close-dialog" type="button">Close</button></div>
+    </dialog>
+    <dialog id="library-dialog" aria-labelledby="library-title">
+      <h2 id="library-title">Library</h2>
+      <p class="field-help">Library metadata remains local. Select an item to promote it as this window’s current variant.</p>
+      <ol id="library-list" class="variant-list"></ol>
+      <button class="secondary close-dialog" type="button">Close</button>
+    </dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

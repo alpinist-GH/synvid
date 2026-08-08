@@ -1,0 +1,406 @@
+# SynVid — Local AI Image/Video Generator (no ComfyUI)
+
+## Context
+
+The user wants a friendly, standalone Mac app to generate images/videos from a prompt (and optionally a starting image) — as easy as asking Gemini, unlike ComfyUI's node-graph complexity. The shipped product must be an ordinary signed/notarized `SynVid.app` distributed in a DMG: users install and launch it without separately installing Python, Homebrew, Node, Rust, or project dependencies. The generation engine remains direct Python/diffusers (no ComfyUI dependency), bundled inside the app and fully local/private after explicitly requested model downloads. For the interface, the user shared a reference screenshot of "LocalMusic AI": a dark, native-feeling three-pane app — left sidebar nav (Create / Library), center "Compose" card (inputs, status dot), right "Controls" card (model settings, pinned Generate button at the bottom) — with pill-style chip selectors and iOS-style toggles. The interface should match this look and interaction pattern in a Tauri desktop window.
+
+The app is named **SynVid**, lives at `/Users/alpinist/Github/synvid`, and is intended to become a shareable standalone product rather than remaining a developer-only personal tool (see Positioning below). The project was renamed from `ai-video`; all project-local paths and execution instructions must use the `synvid` root.
+
+The user also wants **prompt-based video editing** integrated as a core feature: after a video is generated, the user can enter a new prompt (and adjust how much to preserve vs. change) to produce an edited version — not just image editing.
+
+The user also wants a **Story Mode inspired by Nano Cinema AI Video Studio**: start from a premise and scene count, create an editable scene plan, generate a key image and motion clip for each scene, synthesize narration, and assemble the approved scenes into one movie. SynVid adopts the workflow, not Nano Cinema's implementation: it remains a native Tauri app with contained sidecar IPC, local models, immutable/versioned outputs, and no Groq, EdgeTTS, Gradio, notebook, CUDA, or system-FFmpeg runtime dependency. Story Mode must allow manual scene authoring and per-scene regeneration; the optional local script assistant may accelerate planning but must never make the story project unreadable or uneditable without that model.
+
+The user also wants understandable video controls rather than raw model parameters alone: duration in seconds, validated aspect-ratio/resolution choices, Draft/Balanced/High generation-quality presets, export quality/file-size profiles, and frame-rate handling. Native model FPS is the safe default. The UI must never imply that duplicating frames creates smoother motion; higher-FPS choices appear only after a real frame-interpolation path passes its own output-quality, memory, time, packaging, and cancellation gates.
+
+The user also asked whether generated videos have voice/audio that can be edited. Investigated: neither LTX-Video nor Wan2.1 (this plan's models) generate any audio track. There is a model that generates synchronized audio+video (including dialogue) — LTX-2, already supported by the installed diffusers version — but its full checkpoint is ~157GB (14B video + 5B audio params), reported to OOM even on 32GB+ CUDA GPUs, and not realistic on this Mac's 48GB unified memory. Decision (user confirmed): add a **separate local text-to-speech narration step** instead — much cheaper, and editable in the ordinary sense (change the narration text, regenerate). See "Voice narration" section below.
+
+Machine: Apple M5 Pro, 48GB unified memory, 457GB free disk.
+
+A design review (Fable-model Plan agent) flagged MPS-specific pitfalls and initially suggested Gradio to save frontend plumbing — but the reference screenshot's level of custom layout/chip/toggle polish isn't achievable by theming Gradio's component DOM. The product therefore uses Tauri with custom HTML/CSS/TypeScript, while a long-lived bundled Python worker owns diffusers/PyTorch inference. This keeps the efficient, supported Python ML stack without making Python a user prerequisite. All of the review's *backend* findings (dtype policy, per-model constraints, memory handling) are retained below.
+
+Already done (setup only, no app code written yet):
+
+- `/Users/alpinist/Github/synvid/venv` — Python 3.11, `torch` 2.13, `torchvision`, `diffusers` 0.39.0, `transformers`, `accelerate`, `imageio[ffmpeg]`, `sentencepiece`, `safetensors`, `huggingface_hub`, `fastapi`, `uvicorn`, and `python-multipart` are installed; `python -m pip check` passes. This environment was moved from the old `ai-video` path, so generated console-script shebangs such as `pip`, `uvicorn`, and `huggingface-cli` still point to the removed path. Recreate the development environment from a lock file in Stage 0 rather than repairing it in place. FastAPI/Uvicorn are no longer product dependencies unless a later development-only diagnostic adapter justifies them; the shipped app uses sidecar IPC, not a local web server.
+- MPS was confirmed before the directory rename, but it is not considered validated for this checkout until the Stage 0 device/dtype probe and Stage 1 real-output gate pass.
+- The renamed directory currently has no Git repository. Establish source control in Stage 0 before application work begins.
+- Confirmed `FluxPipeline`, `LTXPipeline`/`LTXImageToVideoPipeline`, `WanPipeline`/`WanImageToVideoPipeline` exist and support `callback_on_step_end`
+- Confirmed `WanVideoToVideoPipeline` exists in the installed diffusers 0.39.0 as an optional second video-editing engine (see Video editing below). Its `__call__` accepts source video, prompt, guidance, strength, seed generator, and progress callback; it can reuse compatible components from an already-loaded Wan pipeline via `.from_pipe()` without a duplicate checkpoint download.
+- Confirmed `LTXConditionPipeline` in diffusers 0.39.0 accepts a source `video` and a simple `denoise_strength` value explicitly intended for video-to-video editing. Stage 4 therefore starts with the already-downloaded LTX components; Wan editing is an optional comparison/quality path rather than a prerequisite.
+- Confirmed `LTX2Pipeline`/`LTX2ImageToVideoPipeline` exist and expose real audio parameters (`audio_guidance_scale`, `audio_latents`, etc.) — LTX-2 genuinely generates synchronized audio, but at ~157GB it's out of scope for this machine (see Context above and Voice narration section below for the chosen alternative).
+- `~/.cache/huggingface` already has TTS-related weights cached from unrelated prior projects: `ResembleAI/chatterbox`, `myshell-ai/MeloTTS-English/French/Japanese`, `myshell-ai/OpenVoiceV2`. This is useful development evidence only: the standalone product must not depend on, scan, or silently adopt another app's cache. SynVid downloads its authorized copy into its own Application Support model root. The `chatterbox-tts` package itself is not installed in the current environment and belongs in the Stage 5 dependency slice, not the base Stage 0 environment.
+- Confirmed `FluxKontextPipeline` exists (`__call__` takes `image` + `prompt` + `true_cfg_scale`/`guidance_scale`, among others) — this is prompt-based **image** editing, analogous to Stage 4's video editing (see Image editing section below). User confirmed this should be added to scope.
+- Verified: the official `flux1-dev-kontext_fp8_scaled.safetensors` template fails on this MPS path because the required fp8 conversion is unsupported. Mitigation: **use the standard (non-fp8) `black-forest-labs/FLUX.1-Kontext-dev` checkpoint** and select its actual component dtypes through the measured MPS gate below. The community `fp8-mps-metal` monkey patch is unverified and out of scope.
+- No HF token is configured. `FLUX.1-dev` and `FLUX.1-Kontext-dev` require license acceptance and authenticated access; `FLUX.1-schnell` is Apache-2.0 but currently also requires accepting Hugging Face access conditions. No model download may begin without showing its exact revision, expected size, license, and access requirement to the user.
+
+## Positioning
+
+This is intended to be a shareable standalone product, so it must be deliberate about what makes it worth using over the many existing local/hosted AI video tools. Claims this project can make credibly, mostly as a byproduct of decisions already in this plan — worth carrying into the README and any public framing later, not just leaving implicit:
+
+1. **Apple Silicon-native, not a ported CUDA tool.** Most popular local AI-gen tools (ComfyUI, Fooocus, A1111) are built NVIDIA-first, with MPS support as an afterthought that's often broken in exactly the ways this plan already engineers around (fp16 VAE black frames, no `enable_model_cpu_offload` on MPS, dtype pitfalls — see the MPS dtype policy below). Actually handling this correctly, and saying so explicitly, is a real and rare claim.
+2. **Image + video in one simple tool.** Most local options are one or the other (DrawThings/DiffusionBee: image-only; most video tools: ComfyUI-dependent). Combining both without a node graph is a genuine gap.
+3. **Honest, guided defaults over exposed complexity.** ComfyUI's core usability problem is requiring users to understand CFG/steps/samplers before producing anything. Strong per-model defaults with an explicit, opt-in "Advanced" panel (already in this plan's UI design) is a stated design principle, not an accident.
+4. **Prompt-based editing, not just generation — for both video and images.** Most local tools stop at "generate once." Letting a user iterate on a result by prompt (LTX conditioning first, with Wan available as an optional comparison path; FLUX Kontext for images in eligible non-commercial use) rather than only re-rolling from scratch is a further differentiator.
+5. **Voice narration without a 157GB model.** Rather than chasing joint audio-video generation (LTX-2, currently impractical on this hardware), a lightweight local TTS step gets most of the practical value — editable narration — at a fraction of the size/memory cost. Worth stating honestly in the README as "narration via TTS," not "AI voice generation," to avoid overclaiming versus true audio-video models.
+6. **An editable story pipeline, not a one-shot movie button.** Story Mode turns a premise into reviewable scene cards, then reuses SynVid's validated image, image-to-video, narration, lineage, and export paths. Users can approve, rewrite, reorder, retry, or replace one scene without paying the time and memory cost of rerunning the whole film.
+
+**Implication for scope**: claims 1–3 require no new features, just framing. Claims 4–6 *are* new scope — deliberately added per the user's explicit requests, but editing, narration, and Story Mode each have their own stages so none blocks or destabilizes the core generation flow (Stages 1–3). Story Mode is scheduled only after its image, video, narration, persistence, and composition primitives pass independently.
+
+**Distribution constraint**: a local personal build and a publicly shared build are different product profiles. `FLUX.1-dev` and `FLUX.1-Kontext-dev` use the FLUX.1 dev non-commercial license; Kontext also requires filters or manual review under its terms. They may be opt-in personal/research features only after explicit license review, and they must not be required by the shareable default profile. The shareable profile should prefer permissively licensed models (`FLUX.1-schnell`, Wan, and a pinned LTX checkpoint with its license recorded) or choose a different permissive image-editing model before release.
+
+## Architecture
+
+```
+synvid/
+  app/
+    package.json
+    src/
+      index.html         Three-pane layout matching the reference
+      main.ts            Tauri commands/events, drag-and-drop, chip/toggle interactions
+      style.css          Dark theme, card panels, pill chips, iOS-style toggles, pinned Generate button
+    src-tauri/
+      Cargo.toml
+      tauri.conf.json    macOS bundle identity, resources, sidecar, permissions, DMG settings
+      src/
+        lib.rs           Narrow commands exposed to the webview
+        worker.rs        Python-worker launch, version handshake, request routing, events, shutdown/recovery
+  worker/
+    __main__.py          Long-lived JSON-lines IPC entry point; stdout is protocol-only
+    protocol.py          Versioned request/response/event schemas and validation
+    models.py            Model registry: revision/license/access metadata, tested dtype policy, constraints, lazy load/unload
+    providers/
+      base.py             Capability-oriented provider contracts; no model-name branching in orchestration
+      image.py            Image generation/editing adapters
+      video.py            Video generation/editing/interpolation adapters
+      audio.py            Narration adapters
+      script.py           Optional local story-planning adapters
+    jobs.py              Single-active-job controller: submit/cancel/status, progress via callback_on_step_end
+    outputs.py           Stable output IDs, metadata/lineage, contained path resolution, atomic finalization
+    store.py             SQLite application index plus schema migrations/recovery from immutable sidecars
+    resources.py         Disk/temp/memory/time estimates, reservations, and model-residency admission
+    video_output.py      Duration/frame mapping, canonical encoding, export profiles, optional interpolation
+    stories.py           Versioned story/scene documents, dependency invalidation, checkpoints, render orchestration
+    composition.py       Deterministic scene normalization, narration/subtitles, concat, and final-movie validation
+  packaging/
+    synvid-worker.spec   Reproducible PyInstaller one-folder worker bundle
+    entitlements.plist   Hardened-runtime entitlements kept to the minimum proven set
+  scripts/
+    build-worker.sh      Build and verify the architecture-specific bundled worker
+    build-macos.sh       Local `.app`/DMG build; no notarization or publication
+    release-macos.sh     Explicitly authorized sign/notarize/staple/validate path
+  tests/                 Protocol, worker, registry, containment, cancellation, metadata, and Tauri lifecycle tests
+  smoke_test.py          Backend-only MPS proof — run in Stage 1
+  venv/                  Development-only environment recreated from the Stage 0 lock; never shipped or committed
+  requirements.txt
+  requirements.lock     Exact worker dependency versions created in Stage 0
+  README.md
+```
+
+The v1 release target is **Apple Silicon macOS only**. Pin and document the minimum macOS version and Rust/Python/Node build toolchains. Cross-platform source structure is welcome, but universal macOS, Intel, Windows, Linux, iOS, and Android builds are separate validated targets—not implied by Tauri.
+
+### Runtime and packaging boundary
+
+- The webview may invoke only narrow Tauri commands. Rust validates the command envelope, owns the worker child process, and translates worker events into Tauri events; the webview never receives a generic shell/process capability.
+- Rust starts one long-lived worker on app launch and performs a protocol-version/worker-version handshake before enabling generation. Python stays resident so repeated jobs do not pay interpreter startup cost and a selected model may remain loaded according to the measured memory policy.
+- Rust and Python communicate using newline-delimited JSON over stdin/stdout with unique request and job IDs. Worker stdout is reserved for valid protocol messages; human-readable diagnostics go to stderr and an app-owned rotating log with secrets, tokens, prompts, and user media paths redacted.
+- IPC carries bounded JSON metadata, IDs, and app-owned file references—not image/video/model bytes or base64 payloads. Rust resolves the bundled worker from Tauri resources rather than the current working directory and supplies explicit app-data/cache/temp paths at startup.
+- Requests include `generate`, `export_video`, `edit_video`, `narrate`, `edit_image`, `create_story`, `update_story`, `draft_story`, `render_story`, `compose_story`, `download_model`, `cancel`, `get_status`, `list_outputs`, and storage/deletion operations. Story document mutations are short atomic requests; draft/render/compose operations are jobs. Responses acknowledge or reject a request; asynchronous events report model-download, generation, story/scene, export, and interpolation progress, status changes, and exactly one terminal result.
+- No HTTP listener, LAN binding, wildcard CORS, or localhost port is part of the product. A development-only HTTP adapter may be added later only if it does not become a second product contract.
+- PyInstaller uses **one-folder mode**, not one-file mode: a one-file bundle would unpack the large Python/PyTorch payload on every launch. Stage 0 must prove the actual Tauri resource/sidecar layout, dynamic-library loading, and relocation from an installed path before feature work depends on it.
+- The development `venv` is never copied into the product. The frozen worker includes its own Python runtime and locked Python dependencies, so a clean Mac does not need Python or Homebrew. Node and Rust are build-time tools only.
+- Model weights are never embedded in the DMG. After explicit size/license/revision confirmation they download to an app-owned model directory under `~/Library/Application Support/SynVid/`; generated outputs, metadata, logs, and temporary workspaces also live in documented app-owned subdirectories there. App updates must preserve these data roots.
+- Ship direct from a signed/notarized DMG for v1 rather than the Mac App Store. Sign nested Python, PyTorch, FFmpeg, and other native binaries before Tauri seals the app; then sign the app and DMG, submit only with explicit authorization, staple, and validate with `codesign`, `spctl`, and Gatekeeper on a clean macOS account/machine.
+
+### Cross-cutting module and extension boundaries
+
+- Product orchestration depends on narrow capability contracts, not concrete model classes or repository names. Initial internal interfaces are `ImageGenerator`, `ImageEditor`, `VideoGenerator`, `VideoEditor`, `Narrator`, `ScriptPlanner`, `Interpolator`, and `Composer`; each declares modes, validated presets, input limits, download/license facts, residency cost, progress/cancellation support, and output facts.
+- The registry resolves a requested capability plus build profile to an eligible provider. UI and job code must not contain scattered checks such as `if model == "wan"`; unsupported controls derive from provider capabilities. Provider-specific dtype/loading/preprocessing remains inside its adapter.
+- Operation requests and results are versioned immutable data structures shared at the Rust/Python boundary. Orchestration, persistence, resource admission, model loading, and media composition remain separately testable. Dependency injection must allow fake providers and tiny fixture media to exercise workflows without downloading or loading production models.
+- v1 supports only built-in, reviewed providers shipped with SynVid. Do **not** expose a third-party Python/plugin directory, arbitrary model URL, dynamic executable loading, or public plugin SDK. A signed extension system is deferred until compatibility, permission, signing, revocation, and supply-chain policies have their own threat review.
+- The single-active-job policy is an implementation choice, not baked into provider contracts or output schemas. Job IDs, state transitions, and persistence must be capable of representing pending work later, but v1 exposes no batch queue or scheduler.
+
+### Persistence, compatibility, and recovery
+
+- Use SQLite for the searchable application index: outputs, jobs, model installs, stories/revisions/scenes, current artifact selections, storage accounting, and migration state. Keep immutable versioned JSON sidecars beside finalized media as portable provenance and recovery truth; SQLite paths reference opaque IDs and relative app-owned paths.
+- Every schema and IPC envelope has an explicit version. Migrations are ordered, transactional, idempotent under retry, backed up before destructive transformation, and tested from every shipped schema version. A newer unsupported schema fails read-only with an actionable message rather than being downgraded or overwritten.
+- Startup performs bounded integrity checks. If the index is corrupt or missing, SynVid preserves it for diagnostics and can rebuild a fresh index from validated sidecars without altering media. Rebuild conflicts, missing files, duplicate IDs, and checksums are reported rather than guessed.
+- Protocol handshake includes compatible version ranges and feature/capability negotiation, not only exact version equality. An incompatible worker never receives a job; the UI explains whether the app or bundled worker is damaged/outdated.
+- Prompts and Story Mode edits autosave through optimistic revisions. Undo/redo uses bounded semantic operations or revision snapshots and survives ordinary navigation; it is not implemented as mutation of historical media outputs.
+
+### Resource admission and estimates
+
+- Before accepting a model download or job, calculate required download, installed-model, output, temporary, and safety-margin disk space. Reserve the job's estimated temporary/output space atomically; release the reservation on every terminal path. Low disk during execution fails safely without deleting completed artifacts.
+- Each provider supplies measured peak-memory and wall-time estimates keyed by device, model revision, mode, resolution, frames, recipe, and packaging profile. Until measurements exist, the UI says “Not measured” rather than inventing an ETA. Estimates are ranges and are updated only from redacted local measurements with no telemetry upload.
+- A central admission decision selects required model unloads, denies combinations that exceed validated budgets, and reports the concrete remedy before work begins. Jobs cannot independently load competing large models behind the controller's back.
+
+### Layout mapping (reference → this app)
+
+**Left sidebar**: app title "SynVid"; a "Create" nav item (primary/active view); a **"Story"** nav item for multi-scene projects; a "Library" section with "All Generations" (reads validated output metadata rather than scanning arbitrary files — thumbnails/date, click to reopen); "Settings" at the bottom (shows model access/download/license status, storage use, and deletion controls).
+
+**Center "Compose" card** (header + status dot: Ready / Loading model… / Generating…):
+
+- **Model** chips (replacing "Style" chips): `FLUX.1-schnell`, `FLUX.1-dev` (non-commercial opt-in), `LTX-Video`, `Wan2.1-1.3B`, `Wan2.1-14B` (experimental). A chip cannot initiate an unannounced download; unavailable models first show revision, size, license, disk-space impact, and an explicit Download action.
+- **Prompt** textarea
+- **Mode** chips: `Text → Image` (flux models only), `Text → Video`, `Image → Video` — an explicit choice rather than inferring from drag-and-drop, which resolves the ambiguity about what happens when an image is dropped on FLUX. Selecting `Image → Video` reveals the drag-and-drop image zone; it's hidden otherwise. `Image → Video` is disabled/hidden for `wan2.1-1.3b` (no i2v variant) and for flux models (no img2img in v1).
+- **Aspect ratio / resolution** chips (replacing "Persona" chips) — populated from the selected model's valid presets in the registry, not free text
+- **Duration** in seconds for video modes — shown as friendly validated presets derived from the selected model's native FPS and supported frame counts. The Advanced panel may show the exact frame count; users do not have to calculate it.
+
+**Right "Controls" card**:
+
+- Static "Local" badge (no cloud mode — reinforces the local/private value prop)
+- **Generation quality** selector: `Draft`, `Balanced` (default), or `High`, mapped to a validated per-model step/guidance recipe. This controls inference cost and potential generation quality, not codec bitrate or file size.
+- Steps slider in Advanced (per-model default/range from registry). Changing steps or guidance makes the quality preset `Custom`; the UI always shows the effective values before generation.
+- Exact frame count in Advanced for video models, constrained to the registry's valid values and synchronized with the friendly Duration control.
+- Guidance-scale row with an "Auto" toggle. For FLUX, `guidance_scale` controls embedded guidance and is valid; only negative prompting requires true CFG (`true_cfg_scale > 1`). Keep true CFG and negative prompts in the opt-in Advanced panel until their extra memory/time cost is measured.
+- Seed field, placeholder "Random"
+- **Generate** button pinned at the bottom of the panel — disabled while a job is running, shows live status text under it fed by Tauri progress events. On window reload/recreation, the UI queries current worker state once and reattaches to the active job.
+
+**On a completed video output** (finishing/export): an "Export" action opens controls that are deliberately separate from generation quality:
+
+- **Export quality**: `High`, `Balanced` (default), or `Small File`, each mapped to an exact tested container/codec/encoder/pixel-format/rate-control recipe. Show expected tradeoffs and the actual resulting file size; never label encoder compression as generation quality.
+- **Frame rate**: `Native` (default, with the actual FPS shown). Additional target FPS values appear only when a validated interpolation engine is available for that source/target combination. Merely changing timestamps or duplicating frames is not an allowed "higher FPS" implementation.
+- Exporting never mutates or re-runs the generation. SynVid retains one canonical validated video and creates a separately tracked export artifact, so users can make a smaller file or interpolated version later without losing the source.
+
+**On a completed video output** (new, for editing — Stage 4): an "Edit" action appears alongside the result (in the output view and in "All Generations"), opening a small panel with a new prompt field and a "Change amount" slider, plus an "Apply Edit" button. The default engine is Auto (reuse LTX when available); an Advanced engine selector may offer Wan after its checkpoint has passed Stage 3.
+
+**On a completed video output** (new, for narration — Stage 5): an "Add Voice" action alongside "Edit", opening a panel with a plain text box (the narration script — separate from the visual prompt) and a "Generate Voice" button. Applying it produces a new version whose single audio track is the new narration; re-running it creates another descendant with replacement narration and never mutates the source.
+
+**On a completed image output** (new, for image editing — Stage 6): an "Edit" action, mirroring the video one — a new prompt field and an "Apply Edit" button, no strength slider needed since Kontext is instruction-based rather than strength-based img2img. This is distinct from the Compose flow's `Image → Video` mode chip (which is about *generation-time* image input for i2v, still disabled for flux models) — Kontext editing only ever acts on an already-completed image output.
+
+### Usability, onboarding, accessibility, and recovery
+
+- First launch explains the local-only data model, app/model storage locations, model licenses/download sizes, and the distinction between app size and later model downloads. It runs a device/OS/free-space check and offers an explicitly chosen small validation render after a compatible model is installed; setup remains resumable and never downloads or renders merely by advancing a page.
+- Every creation form autosaves non-secret draft state. Prompt/control edits support bounded undo/redo and “Reset to preset.” Closing or navigating away during an unsaved/import operation warns only when state is genuinely at risk; completed immutable outputs never need a save prompt.
+- Generation results support **variants**: retain multiple outputs for the same request/scene, compare them side by side with identical metadata fields, and explicitly promote one as current. Promotion changes only a reference in project state; it neither deletes alternatives nor mutates media.
+- Settings includes a **Recovery Center** showing interrupted jobs, missing/corrupt artifacts, stale story steps, orphaned safe-to-remove partial workspaces, index-rebuild status, and storage cleanup previews. Recovery actions state exactly what is retained or removed and never retry a costly job without confirmation.
+- Meet WCAG 2.2 AA where applicable to the webview: complete keyboard operation and logical focus order; visible unobscured focus; semantic headings, labels, live status, and error associations; non-drag alternatives for upload/reorder/sliders; adequate target size/spacing and contrast; text zoom without clipping; reduced-motion support; captions/transcripts; and no state conveyed by color alone. Test the installed app with macOS VoiceOver, keyboard-only input, increased text size, reduced motion, and light/dark system contrast settings.
+- Destructive and expensive actions are visually distinct. Model downloads, long renders, cascade deletion, and story replacement show scope/cost before confirmation. Routine reversible edits do not accumulate confirmation dialogs.
+
+### Model registry (`worker/models.py`)
+
+- `flux-schnell` — image only, `FluxPipeline`, `black-forest-labs/FLUX.1-schnell`; Apache-2.0, but Hugging Face access acceptance may be required. **Build/test this before FLUX dev** to validate FLUX on MPS without adopting the dev license.
+- `flux-dev` — image only, `FluxPipeline`, `black-forest-labs/FLUX.1-dev`; gated and non-commercial. Optional personal/research profile only after explicit license acceptance; never required by the default shareable profile.
+- `flux-kontext` — image editing only (invoked from a completed image), `FluxKontextPipeline`, `black-forest-labs/FLUX.1-Kontext-dev`; gated, non-commercial, and subject to its filtering/manual-review terms. Optional personal/research profile only. **Use the standard checkpoint, never the fp8_scaled variant on MPS.**
+- `ltx-video` — video, t2v + i2v + LTX-conditioned v2v, `LTXPipeline`/`LTXImageToVideoPipeline`/`LTXConditionPipeline`, `Lightricks/LTX-Video`; pin an exact compatible checkpoint and revision rather than following the repository's moving default.
+- `wan2.1-1.3b` — video, t2v only, `WanPipeline`, `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
+- `wan2.1-14b` — video, t2v + i2v, `WanPipeline`/`WanImageToVideoPipeline`, separate t2v/i2v repos — **experimental**, with a loud UI warning that 48GB unified memory may still be insufficient. Its inclusion is conditional on a measured Stage 3 strategy (offload and/or staged loading, attention slicing, VAE slicing/tiling) producing a valid output without destabilizing the app; otherwise it remains unavailable rather than shipping as a broken chip.
+
+Each entry carries: exact repository and revision; pipeline class and supported modes; license/profile; access requirement; expected download/cache size; tested macOS/PyTorch/diffusers tuple; tested dtype/offload strategy; valid aspect-ratio/resolution presets; native FPS; valid frame counts and their displayed-duration mapping; Draft/Balanced/High generation recipes; Advanced step/guidance ranges; supported export/interpolation targets; and download/install state. Constraints are enforced independently in the UI, Rust command layer, and Python worker.
+
+**MPS policy**: do not impose one dtype/offload recipe on every model. Stage 0/1 must test the upstream-recommended dtype and an fp16 fallback per pipeline on this exact Mac, forcing individual components such as a failing VAE to fp32 only when evidence requires it. `xformers` remains excluded on MPS; seeds use `torch.Generator("cpu").manual_seed(seed)`. Treat model/sequential offload, attention slicing, VAE slicing/tiling, and staged component loading as measured strategies—not unsupported/supported assumptions. Record peak MPS allocation, wall time, and output validity for the selected strategy. Keep only one diffusion pipeline resident; unloading must synchronize MPS, release references, collect garbage, empty the cache, and roll back to a surfaced clean state on failure.
+
+### Video duration, quality, and export (`worker/video_output.py`)
+
+- The canonical generated video uses the selected model's native FPS. Duration choices map to an exact valid frame count through registry data measured for that model; do not assume one arithmetic formula is correct for every pipeline/container. The confirmation/status UI shows requested duration, exact frames/FPS, and expected actual duration before generation.
+- Aspect ratio and resolution are generation inputs, not arbitrary post-generation scaling. Only model/pipeline combinations that passed real MPS output validation appear. Unsupported combinations are absent rather than accepted and silently resized.
+- Generation-quality labels are convenience recipes, not promises of subjective quality. `Draft` prioritizes iteration speed, `Balanced` is the measured default, and `High` is retained only when A/B inspection shows a useful improvement worth its added time/memory. Every recipe stores exact effective parameters in output metadata.
+- Advanced manual steps/guidance remain constrained by the registry. Selecting a manual value switches the label to `Custom`; returning to a named preset restores its entire recipe so stale overrides cannot leak between models.
+- The canonical output is encoded once with a documented, broadly playable archival recipe. `export_video` creates immutable export artifacts referencing the canonical output and records container, codec, encoder, pixel format, rate-control values, output FPS, interpolation engine/version if any, byte size, and checksum. Export failure never damages the canonical source.
+- `High`, `Balanced`, and `Small File` are exact versioned export profiles, validated for playback in QuickTime and at least one independent decoder. Codec/profile availability must account for license/distribution obligations and the FFmpeg build actually bundled with SynVid.
+- Native FPS is always available and is the default. Lower-FPS export may use deterministic frame dropping only when explicitly selected and disclosed. Higher-FPS export requires genuine interpolation; duplicate-frame or metadata-only conversion is prohibited.
+- Frame interpolation is a separate optional processing component and model/download disclosure. Before any target FPS is exposed, compare motion smoothness, temporal artifacts, duration/audio sync, peak memory, wall time, cancellation cleanup, package size, and at least two representative clips. If no candidate passes, v1 remains Native-FPS-only rather than shipping a misleading control.
+- Export/interpolation uses the shared single-active-job controller, app-owned partial workspace, atomic promotion, progress/cancel/terminal contract, and cleanup rules. It must copy or deterministically remux audio without drift and preserve canonical source immutability.
+
+### Video editing (`LTXConditionPipeline` first; Wan optional, Stage 4)
+
+Prompt-based video editing first reuses **LTX** through `LTXConditionPipeline`, which accepts a source video and `denoise_strength`. This keeps the first complete editing workflow independent of a Wan download. After Wan2.1-1.3B passes Stage 3, `WanVideoToVideoPipeline` can be offered as an Advanced alternative and retained only if A/B output justifies its additional model cost.
+
+- Auto engine selection prefers an already-loaded compatible pipeline, with LTX as the v1 baseline. It never downloads another model implicitly.
+- `LTXConditionPipeline.from_pipe(existing_ltx_pipeline)` and `WanVideoToVideoPipeline.from_pipe(existing_wan_pipeline)` may reuse compatible components. Conversion must be validated; failed conversion rolls back without corrupting the resident model state.
+- Source media is addressed only by a stable `source_output_id`. The worker resolves that ID through output metadata and rejects absolute paths, traversal, missing media, unsupported codecs, excessive duration/frame counts, or dimensions outside the chosen engine's limits.
+- Preprocessing is deterministic and recorded in metadata: decoded source fps/duration/dimensions, target engine fps/frame count/resolution, resize/crop policy, and any duration change. Preserve aspect ratio; do not silently stretch the source.
+- Input: source output ID, prompt, optional negative prompt where supported, change amount (`0..1` mapped to the selected pipeline's edit/denoise strength), optional engine (`auto`, `ltx`, `wan-1.3b`, `wan-14b`), and seed.
+- IPC request: `edit_video` → job ID, reusing the single-active-job controller and shared progress/status/cancel contract.
+- Not supported in v1: masks, region editing, object insertion, or lip synchronization. Whole-frame prompt editing only.
+
+### Voice narration (`chatterbox-tts`, Stage 5)
+
+A separate, much lighter capability from video generation/editing — adds an editable narration track to any completed video via local text-to-speech, instead of chasing joint audio-video generation (ruled out above as impractical at ~157GB).
+
+- Library: `chatterbox-tts` (Resemble AI, MIT-licensed, officially supports MPS) — default to the 0.5B English checkpoint (`ResembleAI/chatterbox`). An unrelated development cache exists on this machine, but release behavior and clean-environment testing must use SynVid's app-owned model root. Multilingual and "Turbo" (350M, faster) variants exist and could be added later as alternative voices/speeds, not required for v1.
+- Input: narration text (separate from the visual prompt) and the target video's duration. The video duration is authoritative in v1: shorter narration is padded with silence; narration longer than the video beyond a small mux tolerance is rejected with its measured duration and a prompt to shorten the script. Do not cut off speech, stretch it, extend the video, or change playback speed silently.
+- Process: run `chatterbox-tts` to synthesize WAV, then invoke the exact `imageio-ffmpeg` binary without a shell to copy the video stream and replace any existing audio stream. Produce a new output with parent lineage; never mutate the source file. Chatterbox's Perth watermark must be disclosed in README/About metadata.
+- v1 explicitly does not include: custom voice cloning from a user-supplied reference clip (Chatterbox supports this from ~5s of audio, but it's an obvious v2 addition, not needed to satisfy "editable narration" — adding it now would repeat the scope-creep pattern already flagged in Positioning).
+- Do not assume TTS can remain resident beside a diffusion pipeline. Stage 5 measures combined peak memory and either keeps it resident or unloads it after each job based on evidence.
+- IPC request: `narrate` (`{source_output_id, text}` → job ID), using the same single-active-job controller and progress/status/cancel contract as generation and editing.
+
+### Image editing (`FluxKontextPipeline`, Stage 6)
+
+Prompt-based editing for completed **image** outputs, mirroring Stage 4's video editing but for the FLUX side of the registry.
+
+- Pipeline: `FluxKontextPipeline`, `black-forest-labs/FLUX.1-Kontext-dev` (gated and non-commercial). **Critical**: use the standard checkpoint, not the fp8_scaled single-file template; select dtypes through the measured MPS policy rather than assuming one global recipe.
+- Before implementation, Stage 6 requires a profile decision: either keep Kontext restricted to an explicitly labeled personal/non-commercial build with the required safety process, or choose and validate a permissively licensed image-editing model for the shareable profile. HF authentication alone does not satisfy this gate.
+- Inputs: source image (existing output file), new prompt, optional negative prompt. No mask/region targeting and no multi-image composition (`ip_adapter_image` inputs exist on the pipeline but are out of scope for v1) — instruction-based whole-image editing only, same scope discipline as Stage 4's video editing.
+- Runs through the single-active-job controller used by every generation operation.
+- IPC request: `edit_image` (`{source_output_id, prompt, negative_prompt?}` → job ID), with contained ID resolution, immutable-source lineage, and the shared progress/status/cancel contract.
+- If FP8 memory/speed savings become worth revisiting later, the community `fp8-mps-metal` monkey-patch project is a possible path — explicitly not adopted now given it's an unverified third-party patch.
+
+### Story Mode (editable multi-scene production, Stage 7)
+
+Story Mode is inspired by Nano Cinema's sequence of script → image → narration → motion → FFmpeg composition, but is implemented as a durable project editor over SynVid's already-validated primitives. It is not an opaque one-click batch and does not bypass the model, license, duration, memory, cancellation, or output-validation gates above.
+
+- A story begins with a title, premise, target aspect ratio, scene count, visual style/bible, and optional total-duration target. The user may write every scene manually. An optional **Draft scenes locally** action uses a separately disclosed compact instruction model; `Qwen/Qwen2.5-1.5B-Instruct` is the initial Apache-2.0 candidate, not enabled until an exact revision passes structured-output quality, MPS memory/time, frozen-worker, and license review. No remote LLM/API fallback is permitted.
+- The script model produces versioned, schema-validated JSON rather than prose parsed with regular expressions. Untrusted model output is bounded by scene-count/text-length limits and must validate before replacing anything. A failed draft leaves the current story untouched. The script model is unloaded before diffusion/TTS work unless measured residency proves safe.
+- Each ordered scene card remains directly editable and stores: scene ID/title, narration, still-image prompt, motion/camera prompt, selected validated image/video models and recipes, aspect ratio, requested duration, seed(s), continuity notes, approval state, artifact IDs, and per-step status. The UI supports add, duplicate, reorder, delete, preview, approve, and regenerate only the selected step or scene.
+- Every generated step may retain multiple variants; one explicit current artifact feeds the next step. Users can compare variants, promote an alternative without regeneration, or replace a generated key image, clip, narration track, or subtitle file with validated user media. Imported media is copied into app-owned storage, normalized only into a new derivative, and retains source/import provenance.
+- The project-level style bible contains reusable descriptions for characters, wardrobe, locations, palette, lighting, and visual style. SynVid deterministically incorporates the relevant approved descriptions into scene prompts and records the effective prompts. **v1 continuity is prompt- and reference-frame-assisted, not guaranteed identity retention**: shared text or seeds alone must not be marketed as character consistency. A reference-conditioned image/IP-Adapter path requires a separate model and real cross-scene identity gate before that claim or control appears.
+- Scene execution is explicit and reviewable: approved scene document → key image → image-to-video clip using that image → narration → normalized scene segment. A scene cannot render until its chosen model/mode/duration/resolution combination exists in the validated registry. Users may stop after stills to review the storyboard before spending time on motion or narration.
+- Narration uses Stage 5's local TTS and the video duration remains authoritative. Overlong narration blocks only that scene with the measured speech/clip durations; it is never truncated or time-stretched silently. Shorter narration is padded. Optional subtitles use the exact approved narration and measured sentence-level TTS segment timings; they are stored as a sidecar track first, with a separately generated burned-in export when selected.
+- `render_story` accepts a story ID plus scope (`all_stale`, selected scene IDs, or a selected step). It is one parent job under the single-active-job controller, executes bounded phases sequentially, emits story/scene/phase progress, and atomically checkpoints every completed artifact. Retry is user-initiated and skips valid current-version artifacts; it does not automatically resume an interrupted process.
+- Dependency invalidation is narrow and deterministic: changing narration invalidates that scene's audio/subtitles/segment and final composition; changing a visual prompt/model/seed invalidates its key image, clip, segment, and final composition; changing only motion settings invalidates its clip/segment/final; reorder/transition changes invalidate composition only. Stale artifacts remain addressable history until explicitly deleted, but can never be mistaken for the current scene version.
+- `compose_story` first verifies every selected scene is approved and current, then normalizes codec, pixel format, dimensions, FPS, and audio layout through the bundled FFmpeg path before concatenation. It supports hard cuts in v1; any crossfade/transition must preserve exact A/V duration and pass a later profile gate. The final movie and optional subtitle/burned-caption export are new immutable outputs referencing the story revision and all contributing artifact IDs.
+- The v1 shot editor is deliberately small: preview, reorder, duplicate, trim within validated source bounds, mute/unmute narration, and choose a hard cut. Trim operations create non-destructive composition instructions and derivatives; they never rewrite canonical clips. Multi-track editing, arbitrary overlays/keyframes, color grading, and a general nonlinear-editor timeline are deferred.
+- Story projects can export to and import from a versioned `.synvidstory` package containing a manifest, project/style/scene documents, checksums, and optionally copied media. Export offers “project only” and “self-contained” sizes. Import validates schema/version, entry count, per-entry and aggregate expanded sizes, media types/dimensions/durations, checksums, duplicate IDs, and paths before atomic adoption; no archive entry may escape a fresh app-owned staging directory. Unknown future fields are preserved when safe but never executed.
+- Editing a completed story creates a new story revision and a new final composition; it never mutates a previously rendered movie. Export quality and validated FPS controls work from the canonical story movie exactly as they do for a single generated video.
+- No background music generation, dialogue lip-sync, sound-effects generation, automatic camera grammar, multi-character identity guarantee, or hour-long output claim is part of v1 Story Mode. These require independent quality, licensing, memory, timing, and composition gates rather than being inherited from the reference project.
+
+### Job handling (`worker/jobs.py`)
+
+This is a **single-active-job controller**, not a queue: generation/export/interpolation/edit/narration/story-draft/story-render/story-compose IPC requests return a job ID when idle or a structured `busy` error with the current job ID. Progress and state are pushed as events; `get_status` supports startup/window-reload recovery, and `cancel` requests cooperative pipeline interruption. Terminal states are `succeeded`, `failed`, `cancelled`, or `interrupted`, each with timestamps and a safe user-facing error. Every job writes to a unique `.partial` workspace and atomically promotes media plus metadata only after validation; failure/cancellation cleans partial artifacts and releases model state. In-flight jobs do not resume automatically after a worker/app crash; startup marks them interrupted, removes uncommitted partial artifacts, and retains completed output metadata and atomically committed Story Mode checkpoints.
+
+Rust must supervise worker startup, stderr draining, unexpected exit, and graceful shutdown. A crashed worker yields one terminal interruption event, cannot leave the UI permanently busy, and may be restarted only after child/process state and partial-workspace cleanup are reconciled. Quit during active work requires an explicit cancel-and-quit confirmation and a bounded graceful shutdown followed by child termination if necessary.
+
+### Output, privacy, and application-data contract
+
+- No local server is opened. The Tauri command allowlist exposes only product operations, rejects arbitrary executable paths/arguments, and treats every webview payload as untrusted.
+- Tauri capabilities explicitly name the allowed window labels, plugins, scopes, and custom commands through the generated application manifest; merely registering a Rust command must not make it callable. Capability and CSP snapshots are reviewed in tests. The webview loads only bundled application assets under a restrictive content-security policy. Remote model documentation/license links open through a narrow validated external-link command; remote scripts, remote frames, and arbitrary navigation are not allowed.
+- User-selected images and referenced outputs are size-, MIME-, decode-, dimension-, frame-count-, and duration-validated. Filename input never determines a destination path; source paths from the native picker are copied into a unique app-owned job workspace before processing, and every resolved output/cache path must remain under its documented root after canonicalization. Containment tests cover symlinks, hard links where detectable, aliases, path replacement between validation/use, case/Unicode normalization, and file growth during copy. Open validated descriptors or revalidate identity at use time rather than trusting an earlier path check.
+- Each output has an opaque stable ID and versioned metadata containing media type, creation time, parent/source output IDs, optional story/revision/scene IDs, operation, model repository/revision, named generation-quality recipe plus effective parameters, seed, source/preprocessing facts, requested/actual duration, FPS/frame count/dimensions, canonical encoder facts, license profile, and final relative media path. Export artifacts additionally record their export-quality profile, exact encoder/rate-control facts, interpolation provenance, byte size, checksum, and canonical source ID. Multi-source lineage is an explicit schema migration; it is not encoded into filenames or an overloaded single parent ID.
+- Outputs are immutable. Edits and narration create descendants. Deleting an output with descendants is rejected by default; the UI may offer an explicit cascade delete. Storage totals are computed from disk, and there is no hidden retention outside the documented model, output, temporary, and log roots under Application Support.
+- Story documents are versioned, atomically written app data separate from rendered outputs. Every mutation uses an expected revision to reject lost updates. Deleting a story does not silently delete its generated artifacts; the UI reports retained storage and offers a separate explicit cascade operation after resolving shared lineage.
+- Model downloads require explicit confirmation, sufficient-space preflight/reservation, progress/cancel reporting, HTTPS-only access to reviewed Hub/CDN endpoints, and cleanup of incomplete downloads. The UI distinguishes model-cache deletion from generated-output deletion.
+- The model allowlist pins trusted organization/repository plus immutable commit revision, expected files, sizes, and hashes. Production providers require Safetensors or another reviewed non-executable data format and set `trust_remote_code=False`; pickle/joblib checkpoints, executable repository code, arbitrary URLs, mutable branch names, and post-install scripts are rejected. A model needing remote code requires a new provider implementation and threat/license review, never a runtime toggle.
+- Hugging Face credentials, if needed for gated models, must use an OS-protected credential store and must never be passed on the command line, returned to the webview, or written to logs/metadata. The default shareable profile works without a token after its permissive models are downloaded.
+- Diagnostics are local and opt-in. “Export diagnostics” first previews included categories and produces a redacted archive with app/worker versions, capability-safe environment facts, error codes, and bounded logs—never prompts, media, tokens, full user paths, model inputs, or unrelated system information by default. Automated redaction tests seed representative secrets and paths and assert their absence.
+
+### Delivery boundary
+
+The required product is a standalone Apple Silicon macOS application. Source execution and an unsigned local bundle are development milestones only; neither is the deliverable. Completion requires a relocatable release `.app` inside a DMG whose bundled worker runs without system Python/Homebrew, whose model/output data survives app updates, and whose nested native binaries pass signing and hardened-runtime validation. A public release additionally requires explicit authorization for Developer ID signing/notarization submission and distribution.
+
+v1 uses manual signed-DMG updates: installing a newer app must leave Application Support data intact and perform any metadata migration atomically. An auto-updater is deferred until its signature/channel/rollback design has a separate threat review; lack of automatic updates does not permit the UI to imply that the app is current.
+
+## Build order (staged — see .claude/skills/ for execution)
+
+- [x] **Stage 0 — reproducible standalone foundation**
+  - Establish Git/source-control baseline for the renamed `synvid` directory; preserve the previous plan as history.
+  - Pin the Apple Silicon/macOS deployment target and exact Python, PyInstaller, Tauri, Rust, Node, and package-manager versions. Commit Python, npm, and Cargo locks; recreate the development `venv` and verify every Python entry point resolves under `/Users/alpinist/Github/synvid`.
+  - Scaffold Tauri v2 with the custom three-pane frontend, narrow capabilities, explicit custom-command manifest, restrictive CSP, Rust worker supervisor, and a versioned JSON-lines protocol with compatibility-range/feature negotiation. No generic shell command is exposed to the webview.
+  - Define the capability-oriented provider contracts, registry resolution rules, immutable operation schemas, and dependency-injection seams. Implement fake providers and tiny fixture media that can complete, fail, report progress, hang until cancelled, and simulate worker death without loading a real model.
+  - Establish SQLite plus immutable JSON sidecars: transactional migrations, backup/restore, optimistic story revisions, corruption preservation, index rebuild, unsupported-newer-version behavior, and relative-path/multi-source lineage rules. Test migration retry and rebuild before production metadata depends on the store.
+  - Implement central resource admission with disk reservations, measured/unknown estimate semantics, model-residency decisions, low-space cleanup, and guaranteed reservation release on success, failure, cancellation, interruption, and crash recovery.
+  - Package a minimal worker with PyInstaller one-folder mode, embed it in a local Tauri `.app`, move the app outside the build tree, and prove it launches with Homebrew/system Python unavailable. Record worker cold-start time and actual app/install size. This is a packaging feasibility gate, not proof that PyTorch/diffusers freezes correctly.
+  - Pin diffusers/PyTorch and every initial model revision; record license, access requirement, expected cache size, immutable revision, allowed files, and checksum source. Enforce Safetensors/reviewed-data-only and `trust_remote_code=False`; add negative tests for pickle, remote code, arbitrary URLs, unexpected files, hash mismatch, and mutable revisions.
+  - Run a small MPS device probe for fp16/bf16 availability and a minimal operation. This is environment validation only, not proof that a model works.
+  - Define app-data/model/output/temp/log locations and atomic schema migration rules. Confirm uninstalling/replacing the `.app` does not target user data; deletion remains an explicit in-app operation.
+  - Update `.claude/skills/video-app-stage1` through `stage4` to the `synvid` path, Tauri architecture, and corrected plan; add Stage 5/6/7/8 instructions only when those stages are unblocked.
+  - Decide and document the two profiles: personal/research and shareable/permissive. No non-commercial model is silently enabled in the latter.
+- [ ] **Stage 1 — LTX backend feasibility gate**
+  - Implement `smoke_test.py`, the LTX provider adapter, model/output registry, single-active-job controller, output persistence, resource admission, and Python worker protocol against one pinned LTX checkpoint only. Orchestration must pass the same contract suite with the fake provider and LTX provider.
+  - Test dtype/offload candidates on the real MPS device and select the lowest-risk valid strategy from measured output, peak memory, and wall time.
+  - Characterize a small safe LTX matrix of aspect ratio, resolution, native FPS, valid frame counts, displayed/actual durations, and step/guidance candidates. These measurements become the only choices available to Stage 2; do not invent arbitrary dimensions or durations in the UI.
+  - Generate and directly inspect a short real video; validate metadata, atomic output, repeat generation, cancellation cleanup, structured busy response, model unload, failed-load rollback, and exactly one terminal event.
+  - Stop if MPS cannot produce a stable watchable output within the recorded memory/time budget; do not build the UI on an unproven backend.
+- [ ] **Stage 2 — standalone Tauri vertical slice**
+  - Build the Tauri HTML/CSS/TypeScript interface, wired through narrow Rust commands/events to only the validated LTX worker and metadata library.
+  - Match the reference layout; add explicit download/license states; implement validated LTX duration/resolution choices, Draft/Balanced/High generation recipes, Advanced Custom behavior, and a visible Native-FPS value; enforce the single-active-job UX and test reattachment after a webview reload.
+  - Implement resumable first-run onboarding, environment/storage/model disclosure, explicit validation render, draft autosave, bounded undo/redo, Reset to preset, variant comparison/promotion, and the Recovery Center. Verify no setup page silently downloads or renders.
+  - Meet the accessibility baseline in the installed app: keyboard-only flow, visible/unobscured focus, VoiceOver names/status/errors, non-drag input and reorder paths, text zoom, target spacing/contrast, reduced motion, and captions. Treat inaccessible custom chips, toggles, sliders, progress, and dialogs as release-blocking defects.
+  - A/B Draft/Balanced/High on fixed seeds before keeping the labels; record time, memory, and visible differences. Implement canonical video encoding plus High/Balanced/Small File export profiles, inspect all three, verify exact metadata and playback, and confirm re-export does not rerun generation or mutate the canonical output.
+  - Freeze the full PyTorch/diffusers worker in one-folder mode and complete real text-to-video and image-to-video runs from a relocated local `.app`, not only from source or `venv`.
+  - Compare development-worker and frozen-worker outputs, peak memory, first-job latency, second-job latency, model reuse, cancellation, and shutdown. Packaging is rejected if it materially breaks correctness or adds unexplained generation overhead.
+  - Kill the worker during loading and generation; verify Rust reports interruption, cleans partial state, drains stderr, restarts safely, and never leaves an orphan worker after app quit.
+- [ ] **Stage 3 — additional generation models, one gate at a time**
+  - Add `FLUX.1-schnell` after explicit access/download confirmation; validate text-to-image on MPS.
+  - Implement gated-model authentication through the selected macOS-protected credential store; verify tokens never enter argv, IPC responses, logs, output metadata, crash reports, or the webview.
+  - Add Wan2.1-1.3B and validate text-to-video.
+  - Attempt Wan2.1-14B only with explicit download approval and a stated memory strategy; leave it unavailable if the gate fails.
+  - `FLUX.1-dev` is optional and belongs only to the personal/research profile after license acceptance; it is not a prerequisite for later stages.
+  - For every model, record revision, actual disk use, first-run time, steady-state generation time, peak memory, valid mode/aspect-ratio/resolution/duration combinations, exact quality recipes, native FPS, canonical encoder facts, and compatible export profiles. Presets are per model; never copy LTX values blindly to FLUX or Wan.
+  - Run a separate frame-interpolation feasibility gate on at least two representative generated clips. Pin and disclose the candidate implementation/model, then measure artifacts, true output FPS/frame cadence, audio sync, duration, memory, time, cancellation, and frozen-app packaging. Expose only targets that pass; if none pass, keep `Native` as the sole honest FPS choice and record the gate as failed rather than duplicating frames.
+- [ ] **Stage 4 — prompt-based video editing**
+  - Implement the `edit_video` IPC contract with `LTXConditionPipeline` first, lineage metadata, deterministic source preprocessing, and the Edit panel.
+  - Validate low/high change amounts on an LTX-generated source. Then, if Wan2.1-1.3B passed Stage 3, A/B the Wan v2v pipeline on the same sources; expose it only if the added cost provides a useful result.
+  - Verify LTX- and Wan-origin source clips where available, source immutability, cancellation cleanup, exact output duration/FPS/dimensions, and that edited descendants retain the same validated export controls.
+- [ ] **Stage 5 — voice narration**
+  - Add `chatterbox-tts` in this stage's locked dependency update, the `narrate` IPC request, direct ffmpeg invocation, output lineage, and the Add Voice panel.
+  - Enforce the duration policy: pad shorter speech; reject overlong speech with a useful measured error; replace existing audio without changing video duration.
+  - Measure TTS-plus-diffusion residency and choose unload behavior; disclose the TTS watermark and verify narration replacement by listening and with `ffprobe`. Export profiles and any interpolated FPS must preserve narration duration and A/V sync.
+- [ ] **Stage 6 — image editing, license-gated**
+  - Resolve the profile gate first: Kontext for a compliant personal/non-commercial profile, or a validated permissive replacement for the shareable profile.
+  - If Kontext is authorized, use the standard checkpoint only—never the fp8_scaled variant on MPS—and implement the `edit_image` IPC request, lineage metadata, and the image Edit panel.
+  - Validate that the instruction visibly changes the output, the original remains immutable, and required license/safety disclosures are present.
+- [ ] **Stage 7 — Story Mode, editable multi-scene production**
+  - Implement the versioned story/scene schema, optimistic revision checks, atomic saves, narrow dependency invalidation, multi-source lineage, and the Story workspace. Manual scene authoring, reorder, approval, storyboard-only rendering, and save/reopen must work before adding script generation.
+  - Add scene-step variants and validated user replacement assets for still, clip, narration, and subtitles. Confirm promotion/replacement invalidates only dependent steps, imported originals remain immutable, and normalization produces traced derivatives.
+  - Gate one compact permissively licensed local instruction model for **Draft scenes locally** (initial candidate: a pinned `Qwen/Qwen2.5-1.5B-Instruct` revision). Validate strict JSON-schema output across representative premises, malformed/adversarial output handling, model download disclosure, MPS memory/time, unload behavior, cancellation, and frozen-worker packaging. If it fails, Story Mode remains fully usable through manual scene cards.
+  - Implement `render_story` over the validated image → image-to-video → narration → segment path. Render at least three scenes, stop after the storyboard review point, revise one scene, render only stale work, interrupt/retry at every phase, and prove already-current scene artifacts are neither recomputed nor lost.
+  - Implement sentence-segmented TTS timing and sidecar subtitles, then `compose_story` with hard cuts and deterministic media normalization. Reject stale/unapproved/mismatched scenes; verify final scene order, exact aggregate duration, A/V sync, subtitle timing, codec/pixel-format/FPS facts, source immutability, and complete story/scene/artifact lineage.
+  - Add the constrained shot editor: preview, reorder, duplicate, bounded non-destructive trim, narration mute/unmute, and hard cuts only. It must remain keyboard/VoiceOver operable and must not grow into an arbitrary multi-track timeline.
+  - Implement `.synvidstory` project-only and self-contained export/import. Test old/current/unsupported schema versions, tampered checksums, path traversal, symlink/archive tricks, duplicate IDs, entry-count and expanded-size limits, decompression bombs, corrupt media, cancellation, atomic adoption, and cleanup.
+  - Run a continuity review with repeated characters/locations. Record prompt/style-bible effectiveness and failure cases; keep the UI and README labeled as consistency guidance, not identity retention, unless a separate reference-conditioned model gate later proves that stronger claim.
+  - From a relocated `.app`, create, save, close, reopen, partially regenerate, compose, export, and delete a story project. Measure wall time, peak memory, disk use, cancellation latency, and recovery from an app/worker crash between scenes.
+- [ ] **Stage 8 — standalone release candidate**
+  - Freeze a release worker from the exact lock, including only the encoder/interpolation components that passed their gates; generate a complete third-party license inventory plus machine-readable SBOM for Rust, npm, Python, FFmpeg, and bundled native libraries; run configured dependency/vulnerability scans and disposition every finding. Ensure no development environment, source cache, token, model weight, test output, absolute build path, or signing secret enters the bundle.
+  - Build the Apple Silicon `.app` and DMG reproducibly. Record compressed DMG size, installed app size, first launch, worker ready time, model download/use, first and repeated generation latency, peak memory, and idle memory.
+  - Sign every nested executable/dylib/framework with hardened runtime before signing the outer app and DMG. With explicit authorization, notarize, staple, and validate the mounted DMG and installed app with `codesign`, `spctl`, and Gatekeeper.
+  - Test from a clean macOS account or clean compatible Mac with no Python, Homebrew, Node, or Rust: install from DMG, launch, download one permissive model after disclosure, generate valid media, quit/relaunch, reopen the library, replace the app with a newer build, and confirm model/output data survives.
+  - Verify damaged/missing worker files, offline launch with an installed model, offline model-download failure, insufficient disk, denied file access, worker crash, app force-quit, and incompatible metadata all fail safely with actionable errors.
+  - Audit generated Tauri capability/custom-command manifests and CSP from the release bundle. Run symlink/hard-link/TOCTOU/path-normalization tests, unsafe-model rejection, archive-import abuse cases, secret/log redaction tests, and an opt-in diagnostic export whose preview matches its actual bounded contents.
+  - Treat an unsigned/ad-hoc local DMG, a successful Tauri compile, or a notarization upload alone as incomplete. Publication/distribution is a separate explicitly authorized action after the release candidate passes.
+- [ ] **README and operational documentation**
+  - Reproducible source/development/build instructions; standalone install/update/uninstall behavior; supported Mac architecture/minimum OS; model/license/profile/security matrix; access/download/storage/reservation expectations; tested Mac/PyTorch/diffusers tuple; MPS results rather than blanket claims; duration/resolution and named generation recipes; canonical versus export quality; native versus interpolated FPS; cache/output/export deletion; editing engine semantics; narration duration/watermark behavior; Story Mode workflow, script-model optionality, continuity limits, project portability and artifact deletion semantics; accessibility/keyboard behavior; local diagnostics/privacy behavior; signing/notarization boundary; SBOM; and third-party notices.
+
+## Post-v1 capability backlog (explicitly deferred)
+
+These items are recorded so the v1 contracts leave room for them, but none may bypass a new product, quality, resource, packaging, license, privacy, and security gate:
+
+- **Reference-conditioned continuity**: approved character/location reference packs, consistent wardrobe/props, and cross-scene identity evaluation. Do not advertise identity retention until representative multi-angle/multi-lighting tests pass.
+- **Audio production**: multiple narrator voices, per-character dialogue, pronunciation dictionaries, background music, sound effects, mixing/ducking, and later lip-sync. Voice cloning additionally requires consent, deletion, encryption, impersonation-abuse, and provenance review.
+- **Batch workflow**: a persistent opt-in render queue, priorities, pause/reorder, overnight scheduling, resource budgets, and per-item retry. The existing single-active-job controller remains the execution admission point until this separate stage is approved.
+- **Advanced editing**: additional validated transitions, overlays/titles, color treatment, and multi-track timelines. Prefer interchange/export to a dedicated editor before attempting a full nonlinear editor inside SynVid.
+- **Signed extensions**: only after defining an extension ABI, isolated permissions, signatures/trust store, compatibility ranges, update/revocation, crash containment, license display, and uninstall cleanup. Arbitrary local Python plugins and arbitrary model URLs remain prohibited.
+- **Updates and providers**: a signed auto-updater only after channel/rollback/threat review; cloud or remote-compute providers only as an explicit non-local profile with separate credentials, privacy disclosures, cost controls, cancellation semantics, and no weakening of the default local-only product.
+
+## Verification
+
+No stage is complete from imports, protocol success, or a native build alone. Completion requires the stage's real output and acceptance evidence. The product is not complete until Stage 8 proves the standalone installed application on a clean environment.
+
+- Environment: recreated path-correct development venv, all dependency locks valid, MPS available, sufficient disk preflight, pinned revision/license matrix complete, and no runtime dependence on developer tools.
+- Modularity: every built-in provider passes one capability contract suite; fake providers drive generate/edit/narrate/story success, progress, rejection, failure, cancellation, timeout, and crash paths; orchestration and UI behavior depend on advertised capabilities rather than concrete model names.
+- Persistence/compatibility: transactional migrations pass from every shipped schema; interrupted migration is retry-safe; unsupported newer data stays unmodified; optimistic revision conflicts are surfaced; a missing/corrupt SQLite index rebuilds from verified sidecars without changing canonical media; protocol range/feature negotiation rejects incompatible workers before a job.
+- Resource admission: download/job space is reserved before work and released on every terminal/crash path; insufficient disk and over-budget model combinations fail before expensive loading; estimates show measured ranges or “Not measured”; model switches follow the central residency decision.
+- Media validity: output exists only after atomic promotion; `ffprobe`/decoder confirms expected codec, dimensions, fps, frame count, duration, and audio disposition; visual inspection confirms non-black/non-garbled content.
+- Video controls: every displayed duration resolves to a validated exact frame count and actual duration; aspect-ratio/resolution combinations match registry constraints; Draft/Balanced/High store their exact effective parameters; Advanced overrides become Custom and do not leak across models; invalid combinations are rejected consistently by UI, Rust, and Python.
+- Export quality: High/Balanced/Small File produce separately tracked playable artifacts from the same canonical source, record exact encoder facts and actual byte sizes, preserve duration/audio, exhibit the expected size-quality ordering on reference clips, and leave the canonical output byte-for-byte unchanged.
+- Frame rate: Native output reports the actual model FPS. Any lower target has correct deterministic frame dropping and disclosed motion tradeoffs. Any higher target demonstrates genuinely new interpolated frames, correct cadence/duration/audio sync, acceptable inspected motion, and no duplicate-frame or metadata-only shortcut. Failed interpolation remains unavailable in the UI.
+- Reproducibility: the returned seed and parameters are stored; repeating a deterministic request is compared within the pipeline's documented determinism limits.
+- Memory/lifecycle: record peak allocated MPS memory and wall time; run two jobs; switch/unload models; verify failed load and cancellation return to a usable baseline without partial outputs.
+- IPC/state: malformed/oversized messages, unknown protocol/request/job IDs, duplicate replies, traversal attempts, oversized inputs, structured busy state, UI reattachment, cancellation races, worker EOF/crash/restart, bounded shutdown, and terminal error sanitization have focused Python and Rust tests.
+- Library/lineage: generated, edited, narrated, imported, and composed descendants survive restart with correct multi-source IDs and immutable sources; variant promotion changes only current selection; deletion and storage totals match disk state.
+- UI: installed Tauri-app run for every enabled model/mode; no unavailable chip or onboarding step triggers a silent download/render; controls show only supported settings; webview reload reattaches to the current job; drafts/undo/redo survive defined navigation; Recovery Center actions match their previews.
+- Accessibility: all creation, download, variant, recovery, Story Mode, export, and destructive flows work keyboard-only with logical visible focus; VoiceOver announces names, values, progress, validation, and terminal state; non-drag alternatives, text zoom, reduced motion, contrast/target sizing, captions, and color-independent state pass the documented WCAG 2.2 AA checklist.
+- Editing: low/high change amounts have perceptibly different preservation behavior; source normalization is recorded; LTX/Wan A/B evidence determines which engines remain exposed.
+- Narration: listen to the result, confirm changed text changes the track, shorter speech is padded to exact video duration, overlong speech is rejected, and a pre-existing audio stream is replaced rather than duplicated.
+- Story Mode: manual projects work without a script model; drafted scene JSON is bounded and schema-valid; story revisions survive restart; stale-step invalidation is exact; storyboard review can precede video spend; variants and user replacement assets invalidate only dependents; selected-scene rerender preserves current scenes; interruption retains only atomically completed checkpoints; non-destructive trim/reorder/mute behavior is exact; composition rejects stale/unapproved inputs; final order, duration, A/V sync, subtitle timing, multi-source lineage, and export behavior match the approved revision. Repeated-character tests are described as continuity guidance unless a separate identity-retention gate passes.
+- Project portability: project-only and self-contained `.synvidstory` packages round-trip with stable checksums and current selections; unsupported/tampered/oversized/traversal/symlink/bomb/corrupt packages fail before adoption; cancelled/failed imports leave no project or unsafe staging residue.
+- License/profile: the shareable profile runs without non-commercial-required features; gated models cannot activate without explicit acceptance and disclosure.
+- Security/supply chain: release capabilities expose only named windows/commands/scopes; CSP admits only required bundled assets/protocols; unsafe model formats/remote code/arbitrary URLs/hash mismatches are rejected; file-race/path tests cannot escape app-owned roots; redaction fixtures are absent from logs and diagnostic exports; SBOM, vulnerability disposition, third-party notices, and dependency locks match the shipped bundle.
+- Packaging: relocated and clean-environment launches use the bundled worker; nested signatures, hardened runtime, notarization/stapling, Gatekeeper assessment, architecture/minimum-OS declaration, DMG integrity, third-party notices, and persistence across app replacement are independently verified.
+- Performance: measure source-versus-frozen generation, Draft/Balanced/High generation time and peak memory, export-profile time/size, interpolation time/memory, worker cold start, first model load/job, repeated warm job, cancellation latency, idle memory, peak MPS memory, DMG size, installed size, and model-cache size. Optimize only against recorded bottlenecks; Tauri/Dart/Rust rewrites do not count as inference optimization without measured end-to-end gain.
+
+## Primary technical references
+
+- [Tauri v2 sidecars](https://v2.tauri.app/develop/sidecar/) — bundled external-binary naming, configuration, launch, stdin, and event handling.
+- [Tauri capabilities](https://v2.tauri.app/security/capabilities/) — constrain windows, custom commands, plugins, and scopes; generated capability files must be reviewed rather than relying on registration defaults.
+- [Tauri Content Security Policy](https://v2.tauri.app/security/csp/) — keep the webview on bundled assets and minimize allowed sources/protocols.
+- [PyInstaller operating mode](https://pyinstaller.org/en/stable/operating-mode.html) — bundled interpreter/dependencies and one-folder versus one-file behavior.
+- [Apple notarizing macOS software](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) — Developer ID, hardened runtime, notarization, and distribution validation.
+- [Diffusers LTX pipelines](https://huggingface.co/docs/diffusers/api/pipelines/ltx_video) — includes `LTXConditionPipeline` video input and `denoise_strength` editing semantics.
+- [Diffusers FLUX pipeline](https://huggingface.co/docs/diffusers/api/pipelines/flux) — distinguishes embedded `guidance_scale` from true CFG/negative prompting.
+- [Official LTX-Video repository](https://github.com/Lightricks/ltx-video) — MPS/version notes and checkpoint evolution; pin rather than follow a moving default.
+- [FLUX.1-schnell model card](https://huggingface.co/black-forest-labs/FLUX.1-schnell) — Apache-2.0 model and current access conditions.
+- [FLUX.1-dev model card](https://huggingface.co/black-forest-labs/FLUX.1-dev) and [FLUX.1-Kontext-dev model card](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev) — non-commercial license/access and Kontext safety obligations.
+- [Official Chatterbox repository](https://github.com/resemble-ai/chatterbox) — MPS usage, MIT code license, and Perth watermark disclosure.
+- [Nano Cinema AI Video Studio](https://github.com/wajason/Nano_Cinema_AI_Video_Studio) — Story Mode workflow reference: structured scenes, stills, narration, LTX motion, composition, and scene-level regeneration; its Gradio/Groq/EdgeTTS/CUDA implementation is not copied into SynVid.
+- [Qwen2.5-1.5B-Instruct model card](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) — Apache-2.0 compact local script-model candidate with documented JSON/structured-output capabilities; exact revision and real SynVid validation remain required.
+- [Hugging Face pickle security](https://huggingface.co/docs/hub/security-pickle) and [Transformers model structure rules](https://huggingface.co/docs/transformers/modeling_rules) — justify rejecting executable serialization and runtime `trust_remote_code` in production model providers.
+- [WCAG 2.2](https://www.w3.org/TR/WCAG22/) — keyboard, focus, semantic, input-alternative, contrast, target-size, and status/error accessibility baseline for the Tauri webview.

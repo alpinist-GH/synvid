@@ -1,0 +1,21 @@
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #151412; color: #f8f1eb; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 760px; }
+main { display: grid; grid-template-columns: 208px minmax(380px, 1fr) 332px; min-height: 100vh; background: #37312e; gap: 1px; }
+section, aside { background: #1b1917; padding: 28px; }
+.sidebar { display: flex; flex-direction: column; gap: 22px; }
+h1, h2, h3, p { margin-top: 0; } h1 { font-size: 22px; letter-spacing: -.04em; } h2 { font-size: 27px; letter-spacing: -.04em; margin-bottom: 0; } h3 { font-size: 14px; }
+nav { display: grid; gap: 7px; } .settings { margin-top: auto; } .nav-item { width: 100%; }
+button, textarea, input, summary { font: inherit; color: inherit; border: 1px solid #5a514b; background: #282421; border-radius: 10px; }
+button { padding: 10px 12px; cursor: pointer; text-align: left; } button[aria-current], .generate { background: #c66a4b; border-color: #d78667; color: #211510; font-weight: 700; } button:disabled { cursor: not-allowed; opacity: .5; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #f6c6a5; outline-offset: 3px; }
+.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 30px; }.eyebrow { color: #cba58f; font-size: 11px; font-weight: 700; letter-spacing: .11em; margin-bottom: 5px; }.status { color: #bfe1b8; font-size: 13px; text-align: right; }
+label, legend { display: block; font-size: 13px; font-weight: 700; margin-bottom: 9px; } textarea { min-height: 190px; padding: 14px; resize: vertical; width: 100%; } .field-help { color: #bdb4ad; font-size: 13px; line-height: 1.45; }
+fieldset { border: 0; margin: 28px 0; padding: 0; }.chips, .recipe-buttons, .history-row { display: flex; flex-wrap: wrap; gap: 8px; }.chip { border-radius: 999px; }.chip.selected, [data-recipe][aria-checked="true"] { background: #49362e; border-color: #c66a4b; }
+.result, .variants { border: 1px solid #49413c; border-radius: 12px; background: #211e1c; padding: 18px; }.result p { color: #c5bbb4; margin-bottom: 0; }.variants { margin-bottom: 16px; }.section-heading { display: flex; gap: 12px; justify-content: space-between; }.section-heading p { color: #bdb4ad; font-size: 12px; margin-bottom: 10px; text-align: right; }.variant-list { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; }.variant { text-align: left; width: 100%; }.variant[aria-pressed="true"] { border-color: #f6c6a5; background: #49362e; }
+.controls { display: flex; flex-direction: column; justify-content: space-between; }.facts { display: grid; gap: 13px; margin: 26px 0; }.facts div { display: flex; justify-content: space-between; gap: 12px; }.facts dt { color: #a99f98; }.facts dd { margin: 0; font-size: 13px; text-align: right; }
+.seed-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }.seed-row input { min-width: 0; padding: 10px; }.history-row { margin-top: 8px; }.history-row button { flex: 1; text-align: center; }.action-area { border-top: 1px solid #49413c; padding-top: 20px; }.action-area p { color: #c5bbb4; font-size: 13px; min-height: 20px; }.generate, .secondary { text-align: center; width: 100%; }.secondary { margin-top: 8px; }.text-button { background: transparent; border: 0; color: #f6c6a5; padding-left: 0; text-decoration: underline; }.error { color: #ffb4a4; font-size: 13px; line-height: 1.4; }
+details { margin: 22px 0; } summary { cursor: pointer; padding: 9px 11px; } details > p { margin: 10px 0; }
+dialog { background: #211e1c; border: 1px solid #806f66; border-radius: 14px; color: #f8f1eb; max-width: 520px; padding: 25px; } dialog::backdrop { background: rgb(0 0 0 / .65); } dialog p { line-height: 1.45; } .dialog-actions { display: flex; flex-direction: column; gap: 8px; }
+.sr-only { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip: rect(0,0,0,0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }

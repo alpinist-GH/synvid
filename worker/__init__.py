@@ -1,0 +1,1 @@
+"""Contained SynVid worker package."""

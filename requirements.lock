@@ -1,0 +1,19 @@
+# Generated Stage 0 dependency lock.  Hashes are added by the release
+# dependency-refresh workflow once wheels are mirrored for Apple Silicon.
+# This file intentionally records no FastAPI/Uvicorn dependencies.
+accelerate==1.14.0
+diffusers==0.39.0
+huggingface_hub==1.27.0
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+numpy==2.4.6
+pillow==12.3.0
+psutil==7.2.2
+protobuf==7.35.1
+safetensors==0.8.0
+sentencepiece==0.2.2
+tiktoken==0.13.0
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.14.1
+PyInstaller==6.18.0
