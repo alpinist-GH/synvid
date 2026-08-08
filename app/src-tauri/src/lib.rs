@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fs;
+use std::io::Read;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 mod worker;
@@ -12,7 +15,7 @@ struct WorkerStatus {
     connected: bool,
     protocol_version: Option<u8>,
     active_job: Option<Value>,
-    measured_profile: Option<Value>,
+    measured_recipes: Option<Value>,
     events: Vec<Value>,
     error: Option<String>,
 }
@@ -22,12 +25,8 @@ struct WorkerStatus {
 struct GenerateRequest {
     prompt: String,
     seed: i64,
-    width: i64,
-    height: i64,
-    frames: i64,
-    fps: i64,
-    steps: i64,
-    guidance_scale: f64,
+    recipe: String,
+    source_image_id: Option<String>,
 }
 
 fn response_payload(reply: Value) -> Result<Value, String> {
@@ -49,6 +48,12 @@ fn response_payload(reply: Value) -> Result<Value, String> {
 #[tauri::command]
 fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> WorkerStatus {
     let mut supervisor = supervisor.lock().expect("worker supervisor lock poisoned");
+    if let Err(error) = supervisor.restart_if_interrupted() {
+        return WorkerStatus {
+            connected: false, protocol_version: None, active_job: None, measured_recipes: None,
+            events: supervisor.take_pending_events(), error: Some(error),
+        };
+    }
     let protocol_version = match supervisor.state() {
         SupervisorState::Ready { protocol_version } => protocol_version,
         _ => {
@@ -56,7 +61,7 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
                 connected: false,
                 protocol_version: None,
                 active_job: None,
-                measured_profile: None,
+                measured_recipes: None,
                 events: vec![],
                 error: Some("Worker unavailable".into()),
             };
@@ -70,8 +75,8 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
             connected: true,
             protocol_version: Some(protocol_version),
             active_job: payload.get("active_job").cloned(),
-            measured_profile: payload
-                .get("measured_profile")
+            measured_recipes: payload
+                .get("measured_recipes")
                 .cloned()
                 .filter(|value| !value.is_null()),
             events: supervisor.take_pending_events(),
@@ -81,7 +86,7 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
             connected: false,
             protocol_version: None,
             active_job: None,
-            measured_profile: None,
+            measured_recipes: None,
             events: supervisor.take_pending_events(),
             error: Some(error),
         },
@@ -96,27 +101,14 @@ fn generate(
     if request.prompt.trim().is_empty() || request.prompt.len() > 4_000 {
         return Err("Prompt must contain 1 to 4000 characters.".into());
     }
-    if [
-        request.width,
-        request.height,
-        request.frames,
-        request.fps,
-        request.steps,
-    ]
-    .iter()
-    .any(|value| *value <= 0)
-    {
-        return Err("Generation settings must be positive.".into());
+    if !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High") {
+        return Err("Generation recipe is not available.".into());
     }
     let payload = json!({
         "prompt": request.prompt,
         "seed": request.seed,
-        "width": request.width,
-        "height": request.height,
-        "frames": request.frames,
-        "fps": request.fps,
-        "steps": request.steps,
-        "guidance_scale": request.guidance_scale,
+        "recipe": request.recipe,
+        "source_image_id": request.source_image_id,
     });
     response_payload(
         supervisor
@@ -156,6 +148,55 @@ fn recover(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Valu
     )
 }
 
+#[tauri::command]
+fn export_video(
+    output_id: String,
+    profile: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if output_id.is_empty() || output_id.len() > 128 || !matches!(profile.as_str(), "high" | "balanced" | "small") {
+        return Err("Invalid export request.".into());
+    }
+    response_payload(
+        supervisor.lock().expect("worker supervisor lock poisoned").request(
+            "export_video", json!({"output_id": output_id, "profile": profile}),
+        )?,
+    )
+}
+
+fn is_supported_image(path: &std::path::Path) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| "The selected image is unavailable.")?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 || metadata.len() > 64 * 1024 * 1024 {
+        return Ok(false);
+    }
+    let mut header = [0_u8; 12];
+    let mut file = fs::File::open(path).map_err(|_| "The selected image is unavailable.")?;
+    let count = file.read(&mut header).map_err(|_| "The selected image could not be read.")?;
+    Ok((count >= 8 && header[..8] == [137, 80, 78, 71, 13, 10, 26, 10])
+        || (count >= 3 && header[..3] == [255, 216, 255])
+        || (count >= 12 && header[..4] == *b"RIFF" && header[8..12] == *b"WEBP"))
+}
+
+/// Opens the native picker in Rust, verifies a regular image, and copies it
+/// into the app-owned root. The webview never handles media bytes or paths.
+#[tauri::command]
+fn choose_source_image(app: tauri::AppHandle) -> Result<Value, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
+        .pick_file() else { return Ok(json!({"sourceImageId": null})); };
+    if !is_supported_image(&source)? {
+        return Err("Choose a PNG, JPEG, or WebP image smaller than 64 MB.".into());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "System clock is unavailable.")?.as_nanos();
+    let id = format!("image-{nonce:x}");
+    let imports = app.path().home_dir().map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/temporary/imports");
+    fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure image storage.")?;
+    let destination = imports.join(&id);
+    fs::copy(&source, &destination).map_err(|_| "Could not import the selected image.")?;
+    Ok(json!({"sourceImageId": id}))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(WorkerSupervisor::new()))
@@ -174,7 +215,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![worker_status, list_outputs, recover, generate, cancel])
+        .invoke_handler(tauri::generate_handler![worker_status, list_outputs, recover, generate, export_video, choose_source_image, cancel])
         .run(tauri::generate_context!())
         .expect("error while running SynVid");
 }

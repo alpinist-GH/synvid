@@ -4,8 +4,9 @@
 
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,8 @@ pub struct WorkerSupervisor {
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
     pending_events: Vec<Value>,
+    executable: Option<PathBuf>,
+    stderr_lines: Arc<Mutex<Vec<String>>>,
 }
 
 impl WorkerSupervisor {
@@ -32,6 +35,8 @@ impl WorkerSupervisor {
             stdin: None,
             stdout: None,
             pending_events: Vec::new(),
+            executable: None,
+            stderr_lines: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -52,7 +57,7 @@ impl WorkerSupervisor {
         let mut child = Command::new(executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("could not launch bundled worker: {error}"))?;
         let mut stdin = child
@@ -63,6 +68,15 @@ impl WorkerSupervisor {
             .stdout
             .take()
             .ok_or("bundled worker stdout was unavailable")?;
+        let stderr = child.stderr.take().ok_or("bundled worker stderr was unavailable")?;
+        let stderr_lines = Arc::clone(&self.stderr_lines);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let mut lines = stderr_lines.lock().expect("worker stderr lock poisoned");
+                if lines.len() == 128 { lines.remove(0); }
+                lines.push(line);
+            }
+        });
         let hello = b"{\"version\":1,\"request_id\":\"app-startup\",\"kind\":\"hello\",\"payload\":{\"protocol_min\":1,\"protocol_max\":1}}\n";
         if let Err(error) = stdin.write_all(hello).and_then(|()| stdin.flush()) {
             let _ = child.kill();
@@ -83,6 +97,7 @@ impl WorkerSupervisor {
         self.child = Some(child);
         self.stdin = Some(stdin);
         self.stdout = Some(reader);
+        self.executable = Some(executable.to_owned());
         self.state = SupervisorState::Ready {
             protocol_version: version,
         };
@@ -152,8 +167,18 @@ impl WorkerSupervisor {
         std::mem::take(&mut self.pending_events)
     }
 
+    pub fn restart_if_interrupted(&mut self) -> Result<(), String> {
+        if !matches!(self.state, SupervisorState::Interrupted | SupervisorState::Stopped) {
+            return Ok(());
+        }
+        let executable = self.executable.clone().ok_or("bundled worker location is unavailable")?;
+        self.start(&executable)
+    }
+
     fn interrupt_with(&mut self, detail: String) -> String {
         self.mark_interrupted();
+        // Stderr is drained to prevent child-process backpressure, but is not
+        // returned to the webview because libraries may include user inputs.
         format!("worker interrupted: {detail}")
     }
 }

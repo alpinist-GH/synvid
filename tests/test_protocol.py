@@ -58,4 +58,4 @@ class ProtocolTests(unittest.TestCase):
         reply = parse_envelope(process.stdout)
         self.assertEqual(reply.kind, "status")
         self.assertIsNone(reply.payload["active_job"])
-        self.assertIsNone(reply.payload["measured_profile"])
+        self.assertIsNone(reply.payload["measured_recipes"])

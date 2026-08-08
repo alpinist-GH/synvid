@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
-const state = { profile: null, activeJob: null, connected: false, recipe: "Balanced", variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, activeJob: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 const $ = (selector) => document.querySelector(selector);
 const connection = $("#connection");
 const jobStatus = $("#job-status");
@@ -38,15 +38,16 @@ function restoreDraft() {
 function setRecipe(recipe) {
   state.recipe = recipe;
   for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === recipe));
-  const measuredOnly = recipe !== "Balanced";
-  $("#recipe-note").textContent = measuredOnly ? `${recipe} is not yet measured for LTX, so it resolves to the validated Balanced recipe.` : "Balanced is the only measured LTX recipe currently available.";
-  $("#advanced-note").textContent = recipe === "Balanced" ? "No custom overrides are available until they pass the same measured-profile gate. This protects output validity." : `Custom behavior is not enabled: ${recipe} resolves to Balanced until its own fixed-seed comparison passes.`;
+  const profile = activeProfile();
+  $("#recipe-note").textContent = profile ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.` : `${recipe} has not been measured on this Mac.`;
+  $("#advanced-note").textContent = "Custom overrides are unavailable: only the measured recipe map may be submitted.";
 }
+function activeProfile() { return state.recipes?.[state.recipe] || null; }
 function updateControls() {
-  const available = state.connected && state.profile && !state.activeJob;
+  const profile = activeProfile(); const available = state.connected && profile && !state.activeJob;
   generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
-  $("#profile").textContent = state.profile ? profileLabel(state.profile) : "Not available";
-  $("#fps").textContent = state.profile ? `${state.profile.fps} FPS (Native)` : "—";
+  $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
+  $("#fps").textContent = profile ? `${profile.fps} FPS (Native)` : "—";
 }
 function renderVariants() {
   const list = $("#variant-list"); list.replaceChildren();
@@ -59,7 +60,7 @@ function renderVariants() {
   }
 }
 function promoteVariant(variant) {
-  state.selectedVariant = variant.outputId; $("#result-message").textContent = `Selected ${variant.outputId}. The canonical output remains immutable.`; renderVariants();
+  state.selectedVariant = variant.outputId; $("#result-message").textContent = `Selected ${variant.outputId}. The canonical output remains immutable.`; $("#export-controls").hidden = false; renderVariants();
 }
 function recordTerminal(events) {
   for (const event of events) {
@@ -73,7 +74,7 @@ function recordTerminal(events) {
 }
 async function refresh() {
   try {
-    const status = await invoke("worker_status"); state.connected = status.connected; state.profile = status.measuredProfile; state.activeJob = status.activeJob;
+    const status = await invoke("worker_status"); state.connected = status.connected; state.recipes = status.measuredRecipes; state.activeJob = status.activeJob;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
     if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
     recordTerminal(status.events || []); updateControls();
@@ -99,6 +100,22 @@ $("#complete-onboarding").addEventListener("click", () => localStorage.setItem(O
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });
+for (const button of document.querySelectorAll("[data-mode]")) button.addEventListener("click", () => {
+  state.mode = button.dataset.mode;
+  for (const item of document.querySelectorAll("[data-mode]")) { const selected = item === button; item.setAttribute("aria-checked", String(selected)); item.classList.toggle("selected", selected); }
+  $("#choose-image").hidden = state.mode !== "image"; $("#source-image-status").hidden = state.mode !== "image";
+});
+$("#choose-image").addEventListener("click", async () => {
+  try { const selected = await invoke("choose_source_image"); state.sourceImageId = selected.sourceImageId; $("#source-image-status").textContent = state.sourceImageId ? "Source image selected and copied into SynVid storage." : "No source image selected."; }
+  catch (reason) { setError(String(reason)); }
+});
+for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
+  if (!state.selectedVariant) return;
+  button.disabled = true;
+  try { const result = await invoke("export_video", { outputId: state.selectedVariant, profile: button.dataset.export }); $("#result-message").textContent = `${result.profile} export completed without regenerating the canonical video.`; }
+  catch (reason) { setError(String(reason)); }
+  finally { button.disabled = false; }
+});
 $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
@@ -109,9 +126,10 @@ generateButton.addEventListener("click", async () => {
   const prompt = $("#prompt").value.trim(); const seed = Number($("#seed").value);
   if (!prompt) return setError("Add a video description before generating.");
   if (!Number.isInteger(seed) || seed < 0 || seed > 2_147_483_647) return setError("Seed must be a whole number from 0 to 2147483647.");
-  if (!state.profile) return setError("No measured LTX profile is available.");
+  if (!activeProfile()) return setError("The selected LTX recipe is not measured on this Mac.");
   setError(); generateButton.disabled = true; jobStatus.textContent = "Submitting generation…";
-  try { const accepted = await invoke("generate", { request: { prompt, seed, ...state.profile, guidanceScale: state.profile.guidance_scale ?? state.profile.guidanceScale } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
+  if (state.mode === "image" && !state.sourceImageId) return setError("Choose a source image before starting image-to-video.");
+  try { const accepted = await invoke("generate", { request: { prompt, seed, recipe: state.recipe, sourceImageId: state.mode === "image" ? state.sourceImageId : null } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
   catch (reason) { setError(String(reason)); jobStatus.textContent = "Generation was not started."; }
   updateControls();
 });

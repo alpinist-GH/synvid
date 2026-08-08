@@ -93,23 +93,31 @@ notarized.
 
 ## Stage 2 implementation status
 
-The three-pane app now has a bounded `worker_status`, `generate`, and `cancel`
-surface. It renders only the worker-reported measured LTX profile; source
-values cannot be substituted by webview input. The UI reattaches by polling
-worker state after reload and receives queued progress/terminal protocol
-messages during that reconciliation. A locally bundled `.app` has been built
-and its embedded worker returned a version-1 handshake.
+The three-pane app has bounded `worker_status`, `generate`, `cancel`,
+`export_video`, and native source-image selection surfaces. The webview never
+supplies generation dimensions or media bytes: it selects a worker-reported
+Draft/Balanced/High recipe, while the native picker copies a verified regular
+PNG/JPEG/WebP image into SynVid-owned temporary storage and passes only its
+opaque ID. The UI reattaches by polling worker state after reload and receives
+queued progress/terminal protocol messages during that reconciliation.
 
 Stage 2 now includes resumable first-run disclosure (which never downloads or
 renders), local draft autosave with a bounded undo/redo history, preset reset,
 metadata-only library selection and variant promotion, plus a Recovery Center
 that previews and removes only incomplete output directories. Draft/Balanced/
-High are honest UI states: until fixed-seed measurements are recorded for the
-other two, they resolve to the validated Balanced LTX recipe and custom
-parameter overrides are unavailable.
+High are distinct measured recipes (4/8/12 steps respectively); custom
+parameter overrides remain unavailable. The measured renders were valid
+256×256 H.264/yuv420p, 9-frame, 8-FPS clips. Draft was visibly abstract,
+while Balanced and High retained the requested yellow flower. Canonical output
+has separate High/Balanced/Small File H.264 exports that preserve its 256×256,
+9-frame, 8-FPS facts without rerunning generation.
 
-Stage 2 is **not complete**: A/B evidence for Draft/Balanced/High, canonical
-and High/Balanced/Small File export implementation and inspection, installed-app
-accessibility review, and relocated real text-to-video/image-to-video frozen
-worker comparison remain acceptance gates. The source build intentionally
-creates a `.app` only; DMG construction is a Stage 8 signing/release task.
+The local app build uses `scripts/build-local-app.sh`: Tauri's normal resource
+copy omits nested PyInstaller framework/symlink files, so the script restores
+the one-folder worker with `ditto`. A copied, relocated `.app` then completed a
+real frozen-worker text-to-video render with Homebrew removed from `PATH`.
+Real LTX image-to-video was also inspected from a locally selected flower
+frame. The UI's visible accessibility review and forced worker-crash/restart
+exercise are still manual acceptance gates; Stage 2 remains open until those
+installed-app checks are recorded. DMG construction is a Stage 8 signing/release
+task.

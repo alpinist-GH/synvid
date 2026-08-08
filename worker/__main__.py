@@ -40,7 +40,9 @@ def _service() -> GenerationService:
     try:
         import json
         measured = json.loads(profile.read_text())
-        disk_bytes = measured.get("estimated_disk_bytes")
+        recipes = measured.get("recipes", {"Balanced": measured})
+        balanced = recipes.get("Balanced", {}) if isinstance(recipes, dict) else {}
+        disk_bytes = balanced.get("estimated_disk_bytes") if isinstance(balanced, dict) else None
         estimate = Estimate(disk_bytes, isinstance(disk_bytes, int) and disk_bytes > 0)
     except (OSError, ValueError, json.JSONDecodeError):
         estimate = Estimate(None, False)
@@ -79,6 +81,12 @@ def serve() -> int:
 
                 job = service.submit(request.payload, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "export_video":
+                output_id = request.payload.get("output_id")
+                profile = request.payload.get("profile")
+                if not isinstance(output_id, str) or not isinstance(profile, str):
+                    raise ProtocolError("export_video requires an output ID and profile")
+                _reply(request, "status", service.export(output_id, profile))
             elif request.kind == "cancel":
                 job_id = request.payload.get("job_id")
                 if not isinstance(job_id, str):

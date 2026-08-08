@@ -34,6 +34,8 @@ def main() -> int:
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--guidance-scale", type=float, required=True)
     parser.add_argument("--estimated-disk-bytes", type=int, required=True)
+    parser.add_argument("--recipe", choices=("Draft", "Balanced", "High"), default="Balanced")
+    parser.add_argument("--source-image", type=Path)
     args = parser.parse_args()
     paths = AppPaths.under(args.app_support)
     paths.create()
@@ -45,6 +47,9 @@ def main() -> int:
         "estimated_disk_bytes": args.estimated_disk_bytes, "peak_rss_bytes": 0,
     }
     candidate_profile = paths.temporary / f"stage1-profile-{uuid.uuid4()}.json"
+    # Keep every independently measured recipe.  A candidate is exercised
+    # before this durable map is updated, so a failed run never becomes UI
+    # selectable merely because it was requested.
     candidate_profile.write_text(json.dumps(profile, sort_keys=True))
     provider = LtxProvider(model_dir / "snapshot", candidate_profile)
     output_dir = paths.temporary / f"stage1-smoke-{uuid.uuid4()}"
@@ -53,7 +58,7 @@ def main() -> int:
     result = provider.run(OperationRequest(
         operation_id="stage1-smoke", capability=Capability.VIDEO_GENERATION, prompt=args.prompt,
         output_dir=output_dir, seed=0, width=args.width, height=args.height, frames=args.frames,
-        fps=args.fps, steps=args.steps, guidance_scale=args.guidance_scale,
+        fps=args.fps, steps=args.steps, guidance_scale=args.guidance_scale, source_image=args.source_image,
     ), lambda fraction, text: print(f"{fraction:.0%} {text}"), lambda: False)
     video = output_dir / result["media_file"]
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)], text=True, capture_output=True, check=True)
@@ -63,9 +68,16 @@ def main() -> int:
     profile["peak_rss_bytes"] = max_rss if sys.platform == "darwin" else max_rss * 1024
     evidence = {"wall_seconds": round(time.monotonic() - started, 3), "video": str(video), "profile": profile, "ffprobe": video_stream}
     (output_dir / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2))
-    candidate_profile.write_text(json.dumps(profile, sort_keys=True))
-    candidate_profile.replace(profile_path)
-    print(json.dumps(evidence, sort_keys=True))
+    try:
+        existing = json.loads(profile_path.read_text())
+        recipes = existing.get("recipes", {"Balanced": existing})
+        if not isinstance(recipes, dict):
+            recipes = {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        recipes = {}
+    recipes[args.recipe] = profile
+    profile_path.write_text(json.dumps({"schema_version": 2, "recipes": recipes}, sort_keys=True))
+    print(json.dumps({**evidence, "recipe": args.recipe}, sort_keys=True))
     return 0
 
 

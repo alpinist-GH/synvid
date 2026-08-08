@@ -32,10 +32,12 @@
         <fieldset>
           <legend>Generation mode</legend>
           <div class="chips" role="radiogroup" aria-label="Generation mode">
-            <button type="button" class="chip selected" role="radio" aria-checked="true">Text to video</button>
-            <button type="button" class="chip" role="radio" aria-checked="false" disabled aria-describedby="image-note">Image to video</button>
+            <button type="button" class="chip selected" data-mode="text" role="radio" aria-checked="true">Text to video</button>
+            <button type="button" class="chip" data-mode="image" role="radio" aria-checked="false" aria-describedby="image-note">Image to video</button>
           </div>
-          <p id="image-note" class="field-help">Image to video is enabled only after a separately validated input profile.</p>
+          <p id="image-note" class="field-help">Choose an image using the native picker. SynVid copies it into its own temporary workspace; the original is not altered.</p>
+          <button id="choose-image" class="secondary" type="button" hidden>Choose source image</button>
+          <p id="source-image-status" class="field-help" hidden>No source image selected.</p>
         </fieldset>
 
         <section class="variants" aria-labelledby="variants-title">
@@ -46,6 +48,11 @@
         <section class="result" aria-labelledby="result-title">
           <h3 id="result-title">Current selection</h3>
           <p id="result-message">No completed output in this window yet.</p>
+          <div id="export-controls" class="export-controls" hidden>
+            <button type="button" data-export="high">Export High</button>
+            <button type="button" data-export="balanced">Export Balanced</button>
+            <button type="button" data-export="small">Export Small File</button>
+          </div>
         </section>
       </section>
 

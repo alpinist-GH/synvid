@@ -42,6 +42,8 @@ class OperationRequest:
     fps: int
     steps: int
     guidance_scale: float
+    recipe: str = "Balanced"
+    source_image: Path | None = None
 
 
 class Provider(Protocol):

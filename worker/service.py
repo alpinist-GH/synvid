@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import re
 from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
@@ -18,6 +21,9 @@ from .store import Store
 
 class GenerationError(ValueError):
     pass
+
+
+_SOURCE_IMAGE_ID = re.compile(r"^[a-z0-9-]{16,128}$")
 
 
 def _required(payload: dict, name: str, typ: type):
@@ -81,17 +87,35 @@ class GenerationService:
         prompt = _required(payload, "prompt", str).strip()
         if not prompt or len(prompt) > 4_000:
             raise GenerationError("prompt must contain 1 to 4000 characters")
+        recipe = payload.get("recipe", "Balanced")
+        if recipe not in {"Draft", "Balanced", "High"}:
+            raise GenerationError("recipe is not available")
+        try:
+            profile = self.provider.measured_recipes().recipes[recipe]
+        except AttributeError:
+            profile = None
+        except (KeyError, ValueError, OSError, RuntimeError) as error:
+            raise GenerationError("requested recipe is not measured for LTX") from error
         values = {
             "capability": Capability.VIDEO_GENERATION,
             "prompt": prompt,
             "seed": _required(payload, "seed", int),
-            "width": _required(payload, "width", int),
-            "height": _required(payload, "height", int),
-            "frames": _required(payload, "frames", int),
-            "fps": _required(payload, "fps", int),
-            "steps": _required(payload, "steps", int),
-            "guidance_scale": float(_required(payload, "guidance_scale", (int, float))),
+            "width": profile.width if profile else _required(payload, "width", int),
+            "height": profile.height if profile else _required(payload, "height", int),
+            "frames": profile.frames if profile else _required(payload, "frames", int),
+            "fps": profile.fps if profile else _required(payload, "fps", int),
+            "steps": profile.steps if profile else _required(payload, "steps", int),
+            "guidance_scale": profile.guidance_scale if profile else float(_required(payload, "guidance_scale", (int, float))),
+            "recipe": recipe,
         }
+        source_image_id = payload.get("source_image_id")
+        if source_image_id is not None:
+            if not isinstance(source_image_id, str) or not _SOURCE_IMAGE_ID.fullmatch(source_image_id):
+                raise GenerationError("source image is invalid")
+            source_image = self.paths.temporary / "imports" / source_image_id
+            if not source_image.is_file():
+                raise GenerationError("selected source image is unavailable")
+            values["source_image"] = source_image
         if any(values[key] <= 0 for key in ("width", "height", "frames", "fps", "steps")):
             raise GenerationError("generation dimensions, frames, FPS, and steps must be positive")
         return values
@@ -116,13 +140,17 @@ class GenerationService:
         threading.Thread(target=watch, daemon=True).start()
 
     def _write_metadata(self, paths: OutputPaths, request: dict, result: dict[str, str]) -> None:
+        metadata_request = {
+            key: (value.value if isinstance(value, Capability) else value.name if isinstance(value, Path) else value)
+            for key, value in request.items()
+        }
         metadata = {
             "schema_version": 1,
             "output_id": paths.output_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "provider": self.provider.facts.provider_id,
             "provider_revision": self.provider.facts.revision,
-            "request": {key: (value.value if isinstance(value, Capability) else value) for key, value in request.items()},
+            "request": metadata_request,
             "result": result,
             "lineage": [],
         }
@@ -140,16 +168,16 @@ class GenerationService:
 
     def status_payload(self) -> dict:
         current = self.jobs.current()
-        profile = None
+        profiles = None
         try:
-            measured = self.provider.measured_profile()
-            profile = {
-                "width": measured.width,
-                "height": measured.height,
-                "frames": measured.frames,
-                "fps": measured.fps,
-                "steps": measured.steps,
-                "guidance_scale": measured.guidance_scale,
+            measured = self.provider.measured_recipes().recipes
+            profiles = {
+                name: {
+                    "width": profile.width, "height": profile.height,
+                    "frames": profile.frames, "fps": profile.fps,
+                    "steps": profile.steps, "guidance_scale": profile.guidance_scale,
+                }
+                for name, profile in measured.items()
             }
         except (AttributeError, ValueError, OSError, RuntimeError):
             # A missing profile is intentionally surfaced as unavailable rather
@@ -157,8 +185,34 @@ class GenerationService:
             pass
         return {
             "active_job": self._job_payload(current) if current else None,
-            "measured_profile": profile,
+            "measured_recipes": profiles,
         }
+
+    def export(self, output_id: str, profile: str) -> dict:
+        if profile not in {"high", "balanced", "small"}:
+            raise GenerationError("export profile is not available")
+        if not output_id or len(output_id) > 128 or "/" in output_id or "\\" in output_id:
+            raise GenerationError("invalid output ID")
+        source = self.paths.outputs / output_id / "video.mp4"
+        if not source.is_file():
+            raise GenerationError("canonical output is unavailable")
+        destination_dir = self.paths.outputs / output_id / "exports"
+        destination_dir.mkdir(exist_ok=True)
+        destination = destination_dir / f"{profile}.mp4"
+        temporary = destination.with_name(f"{profile}.partial.mp4")
+        crf = {"high": "18", "balanced": "23", "small": "30"}[profile]
+        try:
+            import imageio_ffmpeg
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            subprocess.run(
+                [ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", crf, "-pix_fmt", "yuv420p", str(temporary)],
+                check=True, capture_output=True, text=True,
+            )
+            os.replace(temporary, destination)
+        except (OSError, subprocess.SubprocessError) as error:
+            temporary.unlink(missing_ok=True)
+            raise GenerationError("could not create export") from error
+        return {"output_id": output_id, "profile": profile, "export_file": f"exports/{profile}.mp4"}
 
     def library_payload(self) -> list[dict]:
         """Return bounded metadata only; media paths never cross IPC."""
