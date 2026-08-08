@@ -10,7 +10,7 @@ from worker.paths import AppPaths
 from worker.providers.fake import FakeProvider
 from worker.providers.base import Capability, ProviderFacts
 from worker.resources import Estimate
-from worker.service import GenerationService
+from worker.service import GenerationError, GenerationService
 
 
 class GenerationServiceTests(unittest.TestCase):
@@ -70,12 +70,23 @@ class GenerationServiceTests(unittest.TestCase):
                 raise InterruptedError("cancelled")
             def unload(self): self.unloaded = True
         with tempfile.TemporaryDirectory() as temp:
-            service = self._service(temp); planner = BlockingPlanner(); service.story_planner = planner
+            service = self._service(temp); planner = BlockingPlanner(); service.story_planner = planner; service.story_planner_enabled = True
             story = service.create_story({"title": "Draft"}); done = threading.Event(); received = []
             job = service.submit_story_draft({"story_id": story["story_id"], "expected_revision": story["revision"], "count": 3}, lambda _job: None, lambda completed, output: (received.append((completed, output)), done.set()))
             service.cancel(job.job_id)
             self.assertTrue(done.wait(2)); self.assertEqual(received[0][0].state, JobState.CANCELLED)
             self.assertIsNone(received[0][1]); self.assertTrue(planner.unloaded)
+
+    def test_story_planner_is_unavailable_until_its_quality_gate_passes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            story = service.create_story({"title": "Manual story", "premise": "Write scenes by hand"})
+            with self.assertRaises(GenerationError):
+                service.submit_story_draft(
+                    {"story_id": story["story_id"], "expected_revision": story["revision"], "count": 3},
+                    lambda _job: None,
+                    lambda _job, _output: None,
+                )
 
     def test_storyboard_render_is_one_job_and_checkpoints_each_scene(self):
         class ImageProfile: width = height = 64; steps = 2; guidance_scale = 0.0

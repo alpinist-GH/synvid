@@ -6,6 +6,9 @@ const invoke = window.__TAURI__.core.invoke;
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
+// The evaluated compact planner failed the Stage 7 adversarial JSON gate.
+// Do not expose an optional model feature merely because its files are present.
+const STORY_PLANNER_AVAILABLE = false;
 const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 const $ = (selector) => document.querySelector(selector);
@@ -127,7 +130,10 @@ function renderStory(story) {
   $("#add-story-scene").disabled = !story;
   $("#export-story-project").disabled = !story;
   $("#export-story-package").disabled = !story;
-  $("#draft-story-scenes").disabled = !story || !story.premise;
+  $("#draft-story-scenes").disabled = true;
+  $("#story-draft-note").textContent = STORY_PLANNER_AVAILABLE
+    ? "Drafting is optional and never changes the project until you add or edit a scene."
+    : "Local scene drafting is unavailable while its structured-output quality gate is unresolved. You can add scenes manually.";
   $("#save-story-scene").disabled = !story || !activeSceneId; $("#move-scene-earlier").disabled = !story || !activeSceneId; $("#move-scene-later").disabled = !story || !activeSceneId;
   $("#replace-story-still").disabled = !story || !activeSceneId;
   $("#replace-story-clip").disabled = !story || !activeSceneId || !story.scenes.find((scene) => scene.scene_id === activeSceneId)?.artifacts?.clip;

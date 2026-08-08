@@ -66,6 +66,10 @@ class GenerationService:
         self.store = Store(paths.database)
         self.stories = StoryStore(paths.stories, paths.outputs)
         self.story_planner = QwenStoryPlanner(paths.models / "qwen-story-planner")
+        # Qwen2.5-1.5B has a verified local snapshot but did not pass the
+        # Stage 7 adversarial structured-output gate. Keep the optional
+        # product feature unavailable until a replacement candidate passes.
+        self.story_planner_enabled = False
         self._job_outputs: dict[str, str] = {}
         self._job_results: dict[str, dict] = {}
         self.narrator = narrator
@@ -496,6 +500,8 @@ class GenerationService:
         return self.stories.reorder(payload)
 
     def submit_story_draft(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        if not self.story_planner_enabled:
+            raise GenerationError("local story drafting is unavailable because its structured-output gate has not passed")
         story_id, expected = payload.get("story_id"), payload.get("expected_revision")
         story = self.stories.get(story_id)
         if story["revision"] != expected: raise GenerationError("story changed in another window; reload before drafting")
