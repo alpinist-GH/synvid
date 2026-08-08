@@ -36,6 +36,8 @@ def main() -> int:
     parser.add_argument("--status-only", action="store_true")
     parser.add_argument("--story-planner", action="store_true", help="exercise Draft scenes locally through frozen IPC")
     parser.add_argument("--model", choices=("ltx-video", "flux-schnell"), default="ltx-video")
+    parser.add_argument("--recipe", choices=("Draft", "Balanced", "High"), default="Draft")
+    parser.add_argument("--narrate-output-id", help="add a short stock-voice narration to an existing owned video output")
     args = parser.parse_args()
     environment = {**os.environ, "PATH": "/usr/bin:/bin", "SYNVID_APP_SUPPORT": str(args.app_support)}
     process = subprocess.Popen([str(args.worker)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
@@ -73,7 +75,21 @@ def main() -> int:
                 raise RuntimeError(f"frozen planner draft failed: {drafted}")
             print(json.dumps(drafted, sort_keys=True))
             return 0
-        send(process, "frozen-generate", "generate", {"model_id": args.model, "prompt": "A yellow flower gently moving in a spring breeze", "seed": 42, "recipe": "Balanced"})
+        if args.narrate_output_id:
+            send(process, "frozen-narrate", "narrate", {"source_output_id": args.narrate_output_id, "text": "Hi."})
+            accepted = receive(selector, 20)
+            if accepted.get("kind") != "accepted":
+                raise RuntimeError(f"frozen worker rejected narration: {accepted}")
+            deadline = time.monotonic() + args.timeout
+            while time.monotonic() < deadline:
+                event = receive(selector, deadline - time.monotonic())
+                if event.get("kind") == "terminal":
+                    if event.get("payload", {}).get("state") != "succeeded":
+                        raise RuntimeError(f"frozen narration failed: {event}")
+                    print(json.dumps(event, sort_keys=True))
+                    return 0
+            raise TimeoutError("frozen narration did not complete")
+        send(process, "frozen-generate", "generate", {"model_id": args.model, "prompt": "A yellow flower gently moving in a spring breeze", "seed": 42, "recipe": args.recipe})
         accepted = receive(selector, 20)
         if accepted.get("kind") != "accepted":
             raise RuntimeError(f"frozen worker rejected generation: {accepted}")

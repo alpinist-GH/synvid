@@ -5,9 +5,12 @@
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{self, Receiver, RecvTimeoutError},
+};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupervisorState {
@@ -21,7 +24,7 @@ pub struct WorkerSupervisor {
     state: SupervisorState,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
-    stdout: Option<BufReader<ChildStdout>>,
+    stdout_events: Option<Receiver<Result<String, String>>>,
     pending_events: Vec<Value>,
     executable: Option<PathBuf>,
     stderr_lines: Arc<Mutex<Vec<String>>>,
@@ -33,7 +36,7 @@ impl WorkerSupervisor {
             state: SupervisorState::Stopped,
             child: None,
             stdin: None,
-            stdout: None,
+            stdout_events: None,
             pending_events: Vec::new(),
             executable: None,
             stderr_lines: Arc::new(Mutex::new(Vec::new())),
@@ -104,9 +107,31 @@ impl WorkerSupervisor {
         }
         let version = hello_version(&line)
             .ok_or_else(|| "bundled worker returned an incompatible handshake".to_string())?;
+        let (stdout_sender, stdout_events) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = reader;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        let _ = stdout_sender.send(Err("worker stdout closed".into()));
+                        return;
+                    }
+                    Ok(_) => {
+                        if stdout_sender.send(Ok(line)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = stdout_sender.send(Err(error.to_string()));
+                        return;
+                    }
+                }
+            }
+        });
         self.child = Some(child);
         self.stdin = Some(stdin);
-        self.stdout = Some(reader);
+        self.stdout_events = Some(stdout_events);
         self.state = SupervisorState::Ready {
             protocol_version: version,
         };
@@ -115,7 +140,7 @@ impl WorkerSupervisor {
 
     pub fn shutdown(&mut self) {
         self.stdin = None;
-        self.stdout = None;
+        self.stdout_events = None;
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -150,25 +175,46 @@ impl WorkerSupervisor {
             .and_then(|()| stdin.flush())
             .map_err(|error| self.interrupt_with(error.to_string()))?;
 
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let mut line = String::new();
-            let count = self
-                .stdout
-                .as_mut()
-                .ok_or("worker stdout is unavailable")?
-                .read_line(&mut line)
-                .map_err(|error| self.interrupt_with(error.to_string()))?;
-            if count == 0 {
-                return Err(self.interrupt_with("worker exited while handling a request".into()));
+            if let Some(child) = self.child.as_mut() {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|error| self.interrupt_with(error.to_string()))?
+                {
+                    return Err(self.interrupt_with(format!(
+                        "worker exited while handling a request ({status})"
+                    )));
+                }
             }
-            let message: Value = serde_json::from_str(&line)
-                .map_err(|_| self.interrupt_with("worker sent malformed protocol output".into()))?;
-            if message.get("request_id").and_then(Value::as_str) == Some(request_id.as_str()) {
-                return Ok(message);
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(self.interrupt_with("worker did not reply within 10 seconds".into()));
             }
-            // Progress and terminal messages arrive while a later status poll
-            // is waiting. Preserve them for the next UI snapshot.
-            self.pending_events.push(message);
+            let receiver = self
+                .stdout_events
+                .as_ref()
+                .ok_or("worker stdout is unavailable")?;
+            match receiver.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(Ok(line)) => {
+                    let message: Value = serde_json::from_str(&line).map_err(|_| {
+                        self.interrupt_with("worker sent malformed protocol output".into())
+                    })?;
+                    if message.get("request_id").and_then(Value::as_str)
+                        == Some(request_id.as_str())
+                    {
+                        return Ok(message);
+                    }
+                    // Progress and terminal messages arrive while a later status poll
+                    // is waiting. Preserve them for the next UI snapshot.
+                    self.pending_events.push(message);
+                }
+                Ok(Err(error)) => return Err(self.interrupt_with(error)),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(self.interrupt_with("worker stdout reader stopped".into()));
+                }
+            }
         }
     }
 
@@ -268,6 +314,30 @@ mod tests {
             }
         ));
         supervisor.shutdown();
+        fs::remove_file(script).unwrap();
+    }
+
+    #[test]
+    fn worker_exit_is_detected_when_an_orphan_keeps_stdout_open() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let script = std::env::temp_dir().join(format!("synvid-worker-orphan-{nonce}.sh"));
+        fs::write(
+            &script,
+            "#!/bin/sh\nread hello\nprintf '%s\\n' '{\"kind\":\"hello_ack\",\"request_id\":\"app-startup\",\"payload\":{\"protocol_version\":1}}'\nread request\nsleep 1 >&1 &\nexit 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut supervisor = WorkerSupervisor::new();
+        supervisor.start(&script).unwrap();
+        let started = std::time::Instant::now();
+        let error = supervisor.request("get_status", json!({})).unwrap_err();
+        assert!(error.contains("worker interrupted"));
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+        assert_eq!(supervisor.state(), SupervisorState::Interrupted);
         fs::remove_file(script).unwrap();
     }
 }
