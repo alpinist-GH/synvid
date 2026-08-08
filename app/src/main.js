@@ -1,4 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
+// This frontend is deliberately vanilla static assets, not an npm bundle.
+// Tauri exposes this narrow API only because `withGlobalTauri` is enabled in
+// the checked-in desktop configuration.
+const invoke = window.__TAURI__.core.invoke;
 
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
@@ -127,8 +130,11 @@ generateButton.addEventListener("click", async () => {
   if (!prompt) return setError("Add a video description before generating.");
   if (!Number.isInteger(seed) || seed < 0 || seed > 2_147_483_647) return setError("Seed must be a whole number from 0 to 2147483647.");
   if (!activeProfile()) return setError("The selected LTX recipe is not measured on this Mac.");
+  if (state.mode === "image" && !state.sourceImageId) {
+    setError("Choose a source image before starting image-to-video.");
+    return;
+  }
   setError(); generateButton.disabled = true; jobStatus.textContent = "Submitting generation…";
-  if (state.mode === "image" && !state.sourceImageId) return setError("Choose a source image before starting image-to-video.");
   try { const accepted = await invoke("generate", { request: { prompt, seed, recipe: state.recipe, sourceImageId: state.mode === "image" ? state.sourceImageId : null } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
   catch (reason) { setError(String(reason)); jobStatus.textContent = "Generation was not started."; }
   updateControls();

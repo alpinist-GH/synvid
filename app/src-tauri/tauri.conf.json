@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "identifier": "com.synvid.desktop",
   "build": { "frontendDist": "../src" },
-  "app": { "windows": [{ "label": "main", "title": "SynVid", "width": 1200, "height": 780, "resizable": true }] },
+  "app": { "withGlobalTauri": true, "windows": [{ "label": "main", "title": "SynVid", "width": 1200, "height": 780, "resizable": true }] },
   "bundle": { "active": true, "targets": ["dmg"], "icon": [], "resources": ["resources/worker"], "macOS": { "minimumSystemVersion": "14.0" } }
 }

@@ -54,6 +54,9 @@ impl WorkerSupervisor {
             return Ok(());
         }
         self.state = SupervisorState::Starting;
+        // Retain the fixed resource location before launch so an initial
+        // transient failure can be retried through the same narrow path.
+        self.executable = Some(executable.to_owned());
         let mut child = Command::new(executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -80,6 +83,7 @@ impl WorkerSupervisor {
         let hello = b"{\"version\":1,\"request_id\":\"app-startup\",\"kind\":\"hello\",\"payload\":{\"protocol_min\":1,\"protocol_max\":1}}\n";
         if let Err(error) = stdin.write_all(hello).and_then(|()| stdin.flush()) {
             let _ = child.kill();
+            let _ = child.wait();
             self.state = SupervisorState::Interrupted;
             return Err(format!("could not handshake with bundled worker: {error}"));
         }
@@ -87,6 +91,7 @@ impl WorkerSupervisor {
         let mut line = String::new();
         if let Err(error) = reader.read_line(&mut line) {
             let _ = child.kill();
+            let _ = child.wait();
             self.state = SupervisorState::Interrupted;
             return Err(format!(
                 "bundled worker did not reply to handshake: {error}"
@@ -97,7 +102,6 @@ impl WorkerSupervisor {
         self.child = Some(child);
         self.stdin = Some(stdin);
         self.stdout = Some(reader);
-        self.executable = Some(executable.to_owned());
         self.state = SupervisorState::Ready {
             protocol_version: version,
         };
@@ -206,7 +210,11 @@ impl Drop for WorkerSupervisor {
 
 #[cfg(test)]
 mod tests {
-    use super::hello_version;
+    use super::{hello_version, SupervisorState, WorkerSupervisor};
+    use serde_json::json;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn accepts_only_compatible_handshake() {
@@ -220,5 +228,27 @@ mod tests {
             hello_version(r#"{"kind":"status","request_id":"app-startup","payload":{}}"#),
             None
         );
+    }
+
+    #[test]
+    fn worker_exit_is_interrupted_and_restarts_from_the_fixed_path() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let script = std::env::temp_dir().join(format!("synvid-worker-crash-{nonce}.sh"));
+        fs::write(
+            &script,
+            "#!/bin/sh\nread hello\nprintf '%s\\n' '{\"kind\":\"hello_ack\",\"request_id\":\"app-startup\",\"payload\":{\"protocol_version\":1}}'\nread request\nexit 0\n",
+        ).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut supervisor = WorkerSupervisor::new();
+        supervisor.start(&script).unwrap();
+        let error = supervisor.request("get_status", json!({})).unwrap_err();
+        assert!(error.contains("worker interrupted"));
+        assert_eq!(supervisor.state(), SupervisorState::Interrupted);
+
+        supervisor.restart_if_interrupted().unwrap();
+        assert!(matches!(supervisor.state(), SupervisorState::Ready { protocol_version: 1 }));
+        supervisor.shutdown();
+        fs::remove_file(script).unwrap();
     }
 }
