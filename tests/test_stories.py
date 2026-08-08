@@ -2,8 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 import zipfile
+from unittest.mock import patch
 
 from worker.stories import StoryConflict, StoryError, StoryStore
+from worker.paths import AppPaths
+from worker.providers.fake import FakeProvider
+from worker.resources import Estimate
+from worker.service import GenerationError, GenerationService
 
 
 class StoryStoreTests(unittest.TestCase):
@@ -45,6 +50,34 @@ class StoryStoreTests(unittest.TestCase):
                 contents.writestr("../outside", "no")
                 contents.writestr("project.json", "{}")
             with self.assertRaises(StoryError): store.import_project(bad)
+
+    def test_self_contained_package_validates_and_adopts_media_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); outputs = root / "outputs"; outputs.mkdir()
+            store = StoryStore(root / "stories", outputs); story = store.create({"title": "Portable"})
+            story = store.add_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+            output_id = "11111111-1111-1111-1111-111111111111"; (outputs / output_id).mkdir(); (outputs / output_id / "metadata.json").write_text("{}")
+            story = store.record_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": story["scenes"][0]["scene_id"], "step": "still", "output_id": output_id})
+            archive = store.export_project(story["story_id"], self_contained=True)
+            destination = root / "new-outputs"; destination.mkdir(); imported = StoryStore(root / "new-stories", destination).import_project(archive)
+            self.assertEqual(imported["title"], "Portable")
+            self.assertEqual((destination / output_id / "metadata.json").read_text(), "{}")
+
+    def test_project_import_rejects_missing_self_contained_media_before_adoption(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); outputs = root / "outputs"; outputs.mkdir(); store = StoryStore(root / "stories", outputs)
+            story = store.create({"title": "Portable"}); story = store.add_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+            output_id = "11111111-1111-1111-1111-111111111111"; (outputs / output_id).mkdir(); (outputs / output_id / "metadata.json").write_text("{}")
+            story = store.record_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": story["scenes"][0]["scene_id"], "step": "still", "output_id": output_id})
+            archive = store.export_project(story["story_id"], self_contained=True)
+            broken = root / "missing-media.synvidstory"
+            with zipfile.ZipFile(archive) as original, zipfile.ZipFile(broken, "w") as replacement:
+                project = original.read("project.json"); digest = __import__("hashlib").sha256(project).hexdigest()
+                replacement.writestr("project.json", project)
+                replacement.writestr("manifest.json", __import__("json").dumps({"schema_version": 1, "project_sha256": digest, "self_contained": True, "files": {"project.json": digest}}))
+            other_stories = root / "other-stories"; other_outputs = root / "other-outputs"
+            with self.assertRaises(StoryError): StoryStore(other_stories, other_outputs).import_project(broken)
+            self.assertFalse(list(other_stories.glob("*.json")))
 
     def test_artifacts_are_scene_scoped_and_revision_checked(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -103,3 +136,64 @@ class StoryStoreTests(unittest.TestCase):
             store._write(story)
             with self.assertRaises(StoryError):
                 store.get(story["story_id"])
+
+    def test_shot_edits_are_non_destructive_and_invalidate_only_segment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = StoryStore(Path(temp)); story = store.create({"title": "Shot"})
+            story = store.add_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+            scene_id = story["scenes"][0]["scene_id"]
+            story = store.record_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "step": "clip", "output_id": "11111111-1111-1111-1111-111111111111"})
+            story = store.record_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "step": "segment", "output_id": "22222222-2222-2222-2222-222222222222"})
+            edited = store.update_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "trim_start_seconds": 0.5, "trim_end_seconds": 2.0, "narration_muted": True})
+            self.assertEqual(edited["scenes"][0]["shot"]["trim_start_seconds"], 0.5)
+            self.assertTrue(edited["scenes"][0]["shot"]["narration_muted"])
+            self.assertIn("clip", edited["scenes"][0]["artifacts"])
+            self.assertNotIn("segment", edited["scenes"][0]["artifacts"])
+
+    def test_story_artifact_promotion_requires_matching_owned_media(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = GenerationService(AppPaths.under(Path(temp)), FakeProvider(), Estimate(1, True)); story = service.create_story({"title": "Media"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"}); scene_id = story["scenes"][0]["scene_id"]
+            output_id = "11111111-1111-1111-1111-111111111111"; directory = service.paths.outputs / output_id; directory.mkdir(); (directory / "image.png").write_bytes(b"image"); (directory / "metadata.json").write_text('{"result":{"media_file":"image.png"}}')
+            saved = service.record_story_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "step": "still", "output_id": output_id})
+            self.assertEqual(saved["scenes"][0]["artifacts"]["still"]["output_id"], output_id)
+            with self.assertRaises(GenerationError): service.record_story_artifact({"story_id": saved["story_id"], "expected_revision": saved["revision"], "scene_id": scene_id, "step": "clip", "output_id": output_id})
+
+    def test_imported_story_still_is_normalized_and_keeps_import_provenance(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temp:
+            service = GenerationService(AppPaths.under(Path(temp)), FakeProvider(), Estimate(1, True)); story = service.create_story({"title": "Import"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"}); scene_id = story["scenes"][0]["scene_id"]
+            imports = service.paths.temporary / "imports"; imports.mkdir(parents=True); source_id = "image-0123456789abcdef"; Image.new("RGB", (4, 3)).save(imports / source_id, format="PNG")
+            saved = service.import_story_still({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "source_image_id": source_id})
+            output_id = saved["scenes"][0]["artifacts"]["still"]["output_id"]
+            metadata = __import__("json").loads((service.paths.outputs / output_id / "metadata.json").read_text())
+            self.assertEqual(metadata["request"]["source_import_id"], source_id)
+            self.assertTrue((service.paths.outputs / output_id / "image.png").is_file())
+
+    def test_imported_subtitles_are_validated_and_replace_only_subtitle_step(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = GenerationService(AppPaths.under(Path(temp)), FakeProvider(), Estimate(1, True)); story = service.create_story({"title": "Captions"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"}); scene_id = story["scenes"][0]["scene_id"]
+            imports = service.paths.temporary / "imports"; imports.mkdir(parents=True); source_id = "subtitle-0123456789abcdef"; (imports / source_id).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            saved = service.import_story_subtitles({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "source_subtitle_id": source_id})
+            output_id = saved["scenes"][0]["artifacts"]["subtitles"]["output_id"]
+            self.assertTrue((service.paths.outputs / output_id / "subtitles.srt").is_file())
+
+    def test_imported_clip_is_normalized_to_current_scene_facts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = GenerationService(AppPaths.under(Path(temp)), FakeProvider(), Estimate(1, True)); story = service.create_story({"title": "Clip"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"}); scene_id = story["scenes"][0]["scene_id"]
+            baseline = "11111111-1111-1111-1111-111111111111"; directory = service.paths.outputs / baseline; directory.mkdir(); (directory / "video.mp4").write_bytes(b"baseline")
+            (directory / "metadata.json").write_text('{"request":{"width":64,"height":48,"frames":8,"fps":8},"result":{"media_file":"video.mp4"}}')
+            story = service.record_story_artifact({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "step": "clip", "output_id": baseline})
+            imports = service.paths.temporary / "imports"; imports.mkdir(parents=True); source_id = "clip-0123456789abcdef"; (imports / source_id).write_bytes(b"source")
+            commands = []
+            def run(command, **_kwargs):
+                commands.append(command); Path(command[-1]).write_bytes(b"normalized")
+            with patch("imageio_ffmpeg.get_ffmpeg_exe", return_value="/fixed/ffmpeg"), patch("worker.service.subprocess.run", side_effect=run):
+                saved = service.import_story_clip({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene_id, "source_clip_id": source_id})
+            output_id = saved["scenes"][0]["artifacts"]["clip"]["output_id"]
+            self.assertNotEqual(output_id, baseline); self.assertTrue(any("scale=64:48" in item for item in commands[0]))
+            metadata = __import__("json").loads((service.paths.outputs / output_id / "metadata.json").read_text())
+            self.assertEqual(metadata["request"]["source_import_id"], source_id)

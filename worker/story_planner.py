@@ -10,15 +10,20 @@ class StoryPlannerError(RuntimeError): pass
 
 class QwenStoryPlanner:
     def __init__(self, root: Path): self.root = root; self.model = None; self.tokenizer = None
-    def draft(self, premise: str, style_bible: str, count: int) -> list[dict[str, str]]:
+    def draft(self, premise: str, style_bible: str, count: int, cancelled: Callable[[], bool] = lambda: False) -> list[dict[str, str]]:
         if not 1 <= count <= 8: raise StoryPlannerError("requested scene count is unavailable")
+        if cancelled(): raise InterruptedError("story drafting cancelled")
         model, tokenizer = self._load()
         import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList
+        class Cancelled(StoppingCriteria):
+            def __call__(self, _input_ids, _scores, **_kwargs): return cancelled()
         instruction = (f'Return JSON only in this shape: {{"scenes":[{{"prompt":"string","narration":"string"}}]}}. '
                        f'Create exactly {count} concise scenes. Premise: {premise}. Style bible: {style_bible or "none"}. No markdown.')
         text = tokenizer.apply_chat_template([{"role":"system","content":"You produce strict JSON."},{"role":"user","content":instruction}], tokenize=False, add_generation_prompt=True)
         inputs = tokenizer([text], return_tensors="pt").to("mps")
-        generated = model.generate(**inputs, max_new_tokens=256, do_sample=False)
+        generated = model.generate(**inputs, max_new_tokens=256, do_sample=False, stopping_criteria=StoppingCriteriaList([Cancelled()]))
+        if cancelled(): raise InterruptedError("story drafting cancelled")
         raw = tokenizer.decode(generated[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
         if raw.startswith("```json\n") and raw.endswith("\n```") and raw.count("```") == 2: raw = raw[8:-4]
         try: result = json.loads(raw)

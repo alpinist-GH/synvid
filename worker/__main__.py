@@ -18,6 +18,7 @@ from .jobs import BusyError
 from .narration import KokoroNarrator, NarrationError
 from .stories import StoryError
 from .story_planner import StoryPlannerError
+from .story_compose import StoryComposeError
 
 
 WORKER_VERSION = "0.1.0"
@@ -171,9 +172,27 @@ def serve() -> int:
             elif request.kind == "story_reorder_scenes":
                 _reply(request, "status", service.reorder_story_scenes(request.payload))
             elif request.kind == "story_draft_scenes":
-                _reply(request, "status", service.draft_story_scenes(request.payload))
+                def progress(job): _reply(request, "progress", service._job_payload(job))
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output: payload.update(output)
+                    _reply(request, "terminal", payload)
+                job = service.submit_story_draft(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "story_record_artifact":
                 _reply(request, "status", service.record_story_artifact(request.payload))
+            elif request.kind == "story_import_still":
+                _reply(request, "status", service.import_story_still(request.payload))
+            elif request.kind == "story_import_subtitles":
+                _reply(request, "status", service.import_story_subtitles(request.payload))
+            elif request.kind == "story_import_narration":
+                _reply(request, "status", service.import_story_narration(request.payload))
+            elif request.kind == "story_import_clip":
+                _reply(request, "status", service.import_story_clip(request.payload))
+            elif request.kind == "story_export_project":
+                _reply(request, "status", service.export_story_project(request.payload))
+            elif request.kind == "story_import_project":
+                _reply(request, "status", service.import_story_project(request.payload))
             elif request.kind == "render_story":
                 def progress(job):
                     _reply(request, "progress", service._job_payload(job))
@@ -185,6 +204,14 @@ def serve() -> int:
                     _reply(request, "terminal", payload)
 
                 job = service.submit_story_render(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "compose_story":
+                def progress(job): _reply(request, "progress", service._job_payload(job))
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output: payload.update(output)
+                    _reply(request, "terminal", payload)
+                job = service.submit_story_compose(request.payload, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "cancel":
                 job_id = request.payload.get("job_id")
@@ -200,7 +227,7 @@ def serve() -> int:
                 _reply(request, "error", {"code": "unsupported_request", "message": "request is not available in Stage 0"})
         except BusyError as error:
             _reply(request, "error", {"code": "busy", "message": str(error), "current_job_id": error.current_job_id})
-        except (ProtocolError, GenerationError, NarrationError, StoryError, StoryPlannerError, KeyError, TypeError) as error:
+        except (ProtocolError, GenerationError, NarrationError, StoryError, StoryPlannerError, StoryComposeError, KeyError, TypeError) as error:
             # A malformed request cannot be trusted to contain a valid ID.
             _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "invalid_request", "message": str(error)})
     return 0

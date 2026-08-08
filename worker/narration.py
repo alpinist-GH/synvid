@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import wave
+import re
 from typing import Callable, Protocol
 
 
@@ -105,6 +106,37 @@ def replace_audio(source: Path, narration_wav: Path, destination: Path, video_du
         raise NarrationError("could not replace the video audio track") from error
     if not destination.is_file() or destination.stat().st_size == 0:
         raise NarrationError("audio replacement did not produce a video")
+
+
+def synthesize_segmented(narrator: Narrator, text: str, destination: Path, cancelled: Callable[[], bool]) -> list[dict[str, object]]:
+    """Synthesize sentence WAVs, join their exact samples, and return SRT cues."""
+    sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", text.strip()) if item.strip()]
+    if not sentences: return []
+    cues: list[dict[str, object]] = []; params = None; raw = bytearray(); offset = 0.0
+    for index, sentence in enumerate(sentences):
+        if cancelled(): raise InterruptedError("narration cancelled")
+        part = destination.with_name(f"sentence-{index}.wav"); narrator.synthesize(sentence, part, cancelled)
+        try:
+            with wave.open(str(part), "rb") as source:
+                current = source.getparams(); frames = source.readframes(source.getnframes())
+        except (OSError, wave.Error) as error: raise NarrationError("narration provider did not produce a valid WAV") from error
+        finally: part.unlink(missing_ok=True)
+        if params is None: params = current
+        elif (current.nchannels, current.sampwidth, current.framerate, current.comptype) != (params.nchannels, params.sampwidth, params.framerate, params.comptype): raise NarrationError("narration sentence formats differ")
+        duration = len(frames) / (current.framerate * current.sampwidth * current.nchannels)
+        cues.append({"start": offset, "end": offset + duration, "text": sentence}); offset += duration; raw.extend(frames)
+    try:
+        with wave.open(str(destination), "wb") as output:
+            output.setparams(params); output.writeframes(bytes(raw))
+    except (OSError, wave.Error) as error: raise NarrationError("could not join narration sentences") from error
+    return cues
+
+
+def write_srt(path: Path, cues: list[dict[str, object]]) -> None:
+    def stamp(seconds: float) -> str:
+        milliseconds = round(seconds * 1000); hours, milliseconds = divmod(milliseconds, 3_600_000); minutes, milliseconds = divmod(milliseconds, 60_000); seconds, milliseconds = divmod(milliseconds, 1000)
+        return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+    path.write_text("".join(f"{number}\\n{stamp(float(cue['start']))} --> {stamp(float(cue['end']))}\\n{str(cue['text'])}\\n\\n" for number, cue in enumerate(cues, 1)), encoding="utf-8")
 
 
 def _write_array_wav(destination: Path, samples: object, sample_rate: int) -> None:

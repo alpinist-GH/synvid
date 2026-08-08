@@ -13,8 +13,8 @@ class StoryRenderError(RuntimeError): pass
 
 
 class StoryRenderer:
-    def __init__(self, stories: StoryStore, make_still: Callable[[dict], str], make_clip: Callable[[dict, str], str], make_narration: Callable[[dict, str], str]):
-        self.stories, self.make_still, self.make_clip, self.make_narration = stories, make_still, make_clip, make_narration
+    def __init__(self, stories: StoryStore, make_still: Callable[[dict], str], make_clip: Callable[[dict, str], str], make_narration: Callable[[dict, str], str], make_subtitles: Callable[[dict, str], str] | None = None):
+        self.stories, self.make_still, self.make_clip, self.make_narration, self.make_subtitles = stories, make_still, make_clip, make_narration, make_subtitles
 
     def render(self, story_id: str, expected_revision: int, *, scene_ids: set[str] | None = None,
                through: str = "narration", cancelled: Callable[[], bool] = lambda: False,
@@ -24,7 +24,7 @@ class StoryRenderer:
         The callbacks create immutable output IDs; this coordinator never
         touches media paths and therefore cannot overwrite an existing output.
         """
-        if through not in {"still", "clip", "narration"}:
+        if through not in {"still", "clip", "narration", "subtitles"}:
             raise StoryRenderError("story render phase is unavailable")
         story = self.stories.get(story_id)
         if story["revision"] != expected_revision: raise StoryRenderError("story changed in another window; reload before rendering")
@@ -50,6 +50,11 @@ class StoryRenderer:
                 if cancelled(): raise InterruptedError("story render cancelled")
                 progress((number - 0.33) / max(1, len(approved)), f"Scene {number}: generating narration")
                 story = self._record(story, scene["scene_id"], "narration", self.make_narration(scene, scene["artifacts"]["clip"]["output_id"]))
+                scene = self._scene(story, scene["scene_id"])
+            if through == "narration" or not scene.get("narration"): continue
+            if "subtitles" not in scene["artifacts"]:
+                if self.make_subtitles is None: raise StoryRenderError("story subtitles are unavailable")
+                story = self._record(story, scene["scene_id"], "subtitles", self.make_subtitles(scene, scene["artifacts"]["narration"]["output_id"]))
         progress(1.0, "Story render checkpoint saved")
         return story
 

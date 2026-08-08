@@ -12,7 +12,7 @@ import re
 from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
-from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio
+from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio, synthesize_segmented, write_srt
 from .outputs import OutputPaths, allocate, promote, resolve_owned_file
 from .paths import AppPaths
 from .providers.base import Capability, OperationRequest, Provider
@@ -21,6 +21,7 @@ from .store import Store
 from .stories import StoryStore
 from .story_planner import QwenStoryPlanner
 from .story_render import StoryRenderer
+from .story_compose import StoryComposeError, compose_hard_cuts
 
 
 class GenerationError(ValueError):
@@ -63,9 +64,10 @@ class GenerationService:
         self.jobs = JobController()
         self.reservations = ReservationBook(paths.root)
         self.store = Store(paths.database)
-        self.stories = StoryStore(paths.stories)
+        self.stories = StoryStore(paths.stories, paths.outputs)
         self.story_planner = QwenStoryPlanner(paths.models / "qwen-story-planner")
         self._job_outputs: dict[str, str] = {}
+        self._job_results: dict[str, dict] = {}
         self.narrator = narrator
 
     def submit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
@@ -361,8 +363,10 @@ class GenerationService:
             while True:
                 current = self.jobs.status(job.job_id)
                 if current.state in TERMINAL_STATES:
-                    output_id = self._job_outputs.get(job.job_id)
-                    output = {"output_id": output_id} if current.state == JobState.SUCCEEDED and output_id else None
+                    output_id = self._job_outputs.pop(job.job_id, None)
+                    output = self._job_results.pop(job.job_id, None)
+                    if current.state == JobState.SUCCEEDED and output_id:
+                        output = {"output_id": output_id}
                     callback(current, output)
                     return
                 time.sleep(0.01)
@@ -491,22 +495,161 @@ class GenerationService:
     def reorder_story_scenes(self, payload: dict) -> dict:
         return self.stories.reorder(payload)
 
-    def draft_story_scenes(self, payload: dict) -> dict:
+    def submit_story_draft(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         story_id, expected = payload.get("story_id"), payload.get("expected_revision")
         story = self.stories.get(story_id)
         if story["revision"] != expected: raise GenerationError("story changed in another window; reload before drafting")
         count = payload.get("count", 3)
         if isinstance(count, bool) or not isinstance(count, int): raise GenerationError("requested scene count is invalid")
-        try:
-            scenes = self.story_planner.draft(story["premise"], story["style_bible"], count)
-        finally:
-            # Story drafting must not leave the instruction model resident
-            # beside diffusion or narration without a separate measured gate.
-            self.story_planner.unload()
-        return {"story_id": story_id, "revision": expected, "scenes": scenes}
+        ready = __import__("threading").Event(); job: Job | None = None
+        def runner(_progress, cancelled) -> None:
+            ready.wait(); assert job is not None
+            self._on_progress(job, 0.05, "Loading local story planner", on_progress)
+            try:
+                scenes = self.story_planner.draft(story["premise"], story["style_bible"], count, cancelled)
+                if cancelled(): raise InterruptedError("story drafting cancelled")
+                self._job_results[job.job_id] = {"story_draft": {"story_id": story_id, "revision": expected, "scenes": scenes}}
+                self._on_progress(job, 1.0, "Story draft ready for review", on_progress)
+            finally:
+                # Never retain the compact instruction model beside render/TTS.
+                self.story_planner.unload()
+        job = self.jobs.submit(runner); ready.set(); self._watch_terminal(job, on_terminal)
+        return job
 
     def record_story_artifact(self, payload: dict) -> dict:
+        """Promote an existing validated immutable output as a scene artifact.
+
+        This is the common endpoint for generated variants and future native
+        imports.  An opaque ID alone is never enough: its contained sidecar and
+        declared media type must match the requested scene step.
+        """
+        output_id = _required(payload, "output_id", str); step = _required(payload, "step", str)
+        if not _OUTPUT_ID.fullmatch(output_id): raise GenerationError("story artifact output is invalid")
+        expected = {"still": "image.png", "clip": "video.mp4", "narration": "video.mp4", "segment": "video.mp4", "subtitles": "subtitles.srt"}
+        if step not in expected: raise GenerationError("story artifact step is invalid")
+        try:
+            metadata = json.loads((self.paths.outputs / output_id / "metadata.json").read_text())
+            media_file = metadata["result"]["media_file"]
+            media = resolve_owned_file(self.paths.outputs, output_id, media_file)
+            if media_file != expected[step] or not media.is_file() or media.is_symlink(): raise ValueError()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise GenerationError("replacement media does not match the selected story step") from error
         return self.stories.record_artifact(payload)
+
+    def import_story_still(self, payload: dict) -> dict:
+        """Normalize a Rust-picked image into an immutable Story still output."""
+        source_id = _required(payload, "source_image_id", str)
+        if not _SOURCE_IMAGE_ID.fullmatch(source_id): raise GenerationError("selected source image is invalid")
+        source = self.paths.temporary / "imports" / source_id
+        paths: OutputPaths | None = None
+        try:
+            if not source.is_file() or source.is_symlink() or source.stat().st_size > 64 * 1024 * 1024: raise ValueError()
+            from PIL import Image
+            with Image.open(source) as image:
+                image.verify()
+            with Image.open(source) as image:
+                if image.width < 1 or image.height < 1 or image.width > 8192 or image.height > 8192: raise ValueError()
+                normalized = image.convert("RGB")
+                paths = allocate(self.paths.outputs); normalized.save(paths.partial_dir / "image.png", format="PNG", optimize=True)
+        except (OSError, ValueError, ImportError) as error:
+            if paths and paths.partial_dir.exists(): shutil.rmtree(paths.partial_dir)
+            raise GenerationError("selected story image is invalid") from error
+        assert paths is not None
+        request = {"capability": "story_import", "source_import_id": source_id, "width": normalized.width, "height": normalized.height, "frames": 1, "fps": 1, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "PNG normalization"}
+        self._write_metadata(paths, request, {"media_file": "image.png", "media_type": "image/png"}, None)
+        final = promote(paths); self._index_output(final / "metadata.json")
+        replacement = dict(payload); replacement["output_id"] = paths.output_id; replacement["step"] = "still"
+        return self.record_story_artifact(replacement)
+
+    def import_story_subtitles(self, payload: dict) -> dict:
+        source_id = _required(payload, "source_subtitle_id", str)
+        if not _SOURCE_IMAGE_ID.fullmatch(source_id): raise GenerationError("selected subtitle file is invalid")
+        source = self.paths.temporary / "imports" / source_id
+        try:
+            if not source.is_file() or source.is_symlink() or source.stat().st_size > 4 * 1024 * 1024: raise ValueError()
+            text = source.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            blocks = [item for item in text.split("\n\n") if item.strip()]
+            if not blocks or len(blocks) > 10_000 or any(" --> " not in item for item in blocks): raise ValueError()
+        except (OSError, UnicodeDecodeError, ValueError) as error: raise GenerationError("selected subtitle file is not valid SRT") from error
+        paths = allocate(self.paths.outputs); (paths.partial_dir / "subtitles.srt").write_text(text + "\n", encoding="utf-8")
+        request = {"capability": "story_import", "source_import_id": source_id, "width": 0, "height": 0, "frames": 0, "fps": 0, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Validated SRT"}
+        self._write_metadata(paths, request, {"media_file": "subtitles.srt", "media_type": "application/x-subrip"}, None)
+        final = promote(paths); self._index_output(final / "metadata.json")
+        replacement = dict(payload); replacement["output_id"] = paths.output_id; replacement["step"] = "subtitles"
+        return self.record_story_artifact(replacement)
+
+    def import_story_narration(self, payload: dict) -> dict:
+        source_id = _required(payload, "source_audio_id", str); story_id = _required(payload, "story_id", str); scene_id = _required(payload, "scene_id", str)
+        if not _SOURCE_IMAGE_ID.fullmatch(source_id): raise GenerationError("selected narration file is invalid")
+        story = self.stories.get(story_id); expected = _required(payload, "expected_revision", int)
+        if story["revision"] != expected: raise GenerationError("story changed in another window; reload before replacing narration")
+        scene = next((item for item in story["scenes"] if item["scene_id"] == scene_id), None)
+        if not scene or not isinstance(scene["artifacts"].get("clip"), dict): raise GenerationError("a current scene clip is required before replacing narration")
+        clip_id = scene["artifacts"]["clip"]["output_id"]; source = self.paths.temporary / "imports" / source_id
+        try:
+            clip_metadata = json.loads((self.paths.outputs / clip_id / "metadata.json").read_text()); request = clip_metadata["request"]; duration = request["frames"] / request["fps"]
+            if not source.is_file() or source.is_symlink() or source.stat().st_size > 64 * 1024 * 1024: raise ValueError()
+            paths = allocate(self.paths.outputs); wav = paths.partial_dir / "narration.wav"; shutil.copyfile(source, wav); facts = pad_or_reject_wav(wav, duration)
+            replace_audio(self.paths.outputs / clip_id / "video.mp4", wav, paths.partial_dir / "video.mp4", duration); wav.unlink()
+        except (OSError, KeyError, TypeError, ValueError, NarrationError, json.JSONDecodeError) as error:
+            if 'paths' in locals() and paths.partial_dir.exists(): shutil.rmtree(paths.partial_dir)
+            raise GenerationError("selected narration WAV is invalid or does not fit the scene") from error
+        request = {"capability": Capability.NARRATION, "source_output_id": clip_id, "source_import_id": source_id, "width": request["width"], "height": request["height"], "frames": request["frames"], "fps": request["fps"], "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Imported WAV"}
+        self._write_metadata(paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", **facts}, None)
+        final = promote(paths); self._index_output(final / "metadata.json")
+        replacement = dict(payload); replacement["output_id"] = paths.output_id; replacement["step"] = "narration"
+        return self.record_story_artifact(replacement)
+
+    def import_story_clip(self, payload: dict) -> dict:
+        source_id = _required(payload, "source_clip_id", str); story_id = _required(payload, "story_id", str); scene_id = _required(payload, "scene_id", str); expected = _required(payload, "expected_revision", int)
+        if not _SOURCE_IMAGE_ID.fullmatch(source_id): raise GenerationError("selected clip is invalid")
+        story = self.stories.get(story_id)
+        if story["revision"] != expected: raise GenerationError("story changed in another window; reload before replacing clip")
+        scene = next((item for item in story["scenes"] if item["scene_id"] == scene_id), None)
+        if not scene or not isinstance(scene["artifacts"].get("clip"), dict): raise GenerationError("a current scene clip is required before replacing it")
+        baseline = scene["artifacts"]["clip"]["output_id"]; source = self.paths.temporary / "imports" / source_id
+        try:
+            metadata = json.loads((self.paths.outputs / baseline / "metadata.json").read_text()); request = metadata["request"]; width, height, frames, fps = (request[key] for key in ("width", "height", "frames", "fps")); duration = frames / fps
+            if not source.is_file() or source.is_symlink() or source.stat().st_size > 512 * 1024 * 1024: raise ValueError()
+            import imageio_ffmpeg
+            paths = allocate(self.paths.outputs); ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            subprocess.run([ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a?", "-t", f"{duration:.6f}", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(paths.partial_dir / "video.mp4")], check=True, capture_output=True, text=True)
+            if not (paths.partial_dir / "video.mp4").is_file(): raise ValueError()
+        except (ImportError, OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            if 'paths' in locals() and paths.partial_dir.exists(): shutil.rmtree(paths.partial_dir)
+            raise GenerationError("selected video clip could not be normalized") from error
+        request = {"capability": Capability.VIDEO_GENERATION, "source_output_id": baseline, "source_import_id": source_id, "width": width, "height": height, "frames": frames, "fps": fps, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Imported clip normalization"}
+        self._write_metadata(paths, request, {"media_file": "video.mp4", "media_type": "video/mp4"}, None); final = promote(paths); self._index_output(final / "metadata.json")
+        replacement = dict(payload); replacement["output_id"] = paths.output_id; replacement["step"] = "clip"
+        return self.record_story_artifact(replacement)
+
+    def export_story_project(self, payload: dict) -> dict:
+        story_id = _required(payload, "story_id", str)
+        self_contained = payload.get("self_contained", False)
+        if not isinstance(self_contained, bool): raise GenerationError("project export option is invalid")
+        archive = self.stories.export_project(story_id, self_contained=self_contained)
+        return {"archive_name": archive.name, "self_contained": self_contained}
+
+    def import_story_project(self, payload: dict) -> dict:
+        source_id = _required(payload, "source_project_id", str)
+        if not re.fullmatch(r"storyproj-[a-z0-9-]{8,128}", source_id):
+            raise GenerationError("selected story project is invalid")
+        source = self.paths.temporary / "imports" / source_id
+        if not source.is_file() or source.is_symlink() or source.stat().st_size > 2 * 1024 * 1024 * 1024:
+            raise GenerationError("selected story project is unavailable")
+        try:
+            story = self.stories.import_project(source)
+            # Self-contained archives adopt immutable output directories too.
+            # Index their existing sidecars so Library and lineage recovery see
+            # the same selections after restart, without rewriting media.
+            for output_id in self.stories._artifact_ids(story):
+                metadata = self.paths.outputs / output_id / "metadata.json"
+                if metadata.is_file() and not metadata.is_symlink():
+                    self._index_output(metadata)
+            return story
+        except Exception as error:
+            if isinstance(error, GenerationError): raise
+            raise GenerationError("selected story project could not be imported") from error
 
     def submit_story_render(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         """Run Story Mode as one cancellable job, checkpointing each scene step.
@@ -519,7 +662,7 @@ class GenerationService:
         story_id = _required(payload, "story_id", str)
         expected = _required(payload, "expected_revision", int)
         through = payload.get("through", "clip")
-        if through not in {"still", "clip", "narration"}:
+        if through not in {"still", "clip", "narration", "subtitles"}:
             raise GenerationError("story render phase is unavailable")
         scene_ids_raw = payload.get("scene_ids")
         if scene_ids_raw is not None and (not isinstance(scene_ids_raw, list) or len(scene_ids_raw) > 64 or not all(isinstance(item, str) for item in scene_ids_raw)):
@@ -574,12 +717,12 @@ class GenerationService:
                 paths = allocate(self.paths.outputs)
                 try:
                     wav = paths.partial_dir / "narration.wav"
-                    self.narrator.synthesize(scene["narration"], wav, cancelled)
+                    cues = synthesize_segmented(self.narrator, scene["narration"], wav, cancelled)
                     facts = pad_or_reject_wav(wav, video_profile.frames / video_profile.fps)
                     replace_audio(source, wav, paths.partial_dir / "video.mp4", video_profile.frames / video_profile.fps)
                     wav.unlink(missing_ok=True)
                     request = {"capability": Capability.NARRATION, "text": scene["narration"], "source_output_id": clip_id, "width": video_profile.width, "height": video_profile.height, "frames": video_profile.frames, "fps": video_profile.fps, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Story narration"}
-                    self._write_metadata(paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", **facts}, None)
+                    self._write_metadata(paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", "subtitle_cues": cues, **facts}, None)
                     final = promote(paths); self._index_output(final / "metadata.json")
                     return paths.output_id
                 except BaseException:
@@ -587,10 +730,74 @@ class GenerationService:
                     raise
                 finally:
                     self.narrator.unload()
-            renderer = StoryRenderer(self.stories, make_still, make_clip, make_narration)
+            def make_subtitles(scene: dict, narration_id: str) -> str:
+                try:
+                    metadata = json.loads((self.paths.outputs / narration_id / "metadata.json").read_text()); cues = metadata["result"]["subtitle_cues"]
+                    if not isinstance(cues, list): raise ValueError()
+                except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error: raise GenerationError("story narration timing is unavailable") from error
+                paths = allocate(self.paths.outputs)
+                write_srt(paths.partial_dir / "subtitles.srt", cues)
+                request = {"capability": "story_subtitles", "source_output_id": narration_id, "width": 0, "height": 0, "frames": 0, "fps": 0, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Sentence timing"}
+                self._write_metadata(paths, request, {"media_file": "subtitles.srt", "media_type": "application/x-subrip"}, None)
+                final = promote(paths); self._index_output(final / "metadata.json"); return paths.output_id
+            renderer = StoryRenderer(self.stories, make_still, make_clip, make_narration, make_subtitles)
             renderer.render(story_id, expected, scene_ids=scene_ids, through=through, cancelled=cancelled, progress=lambda fraction, text: self._on_progress(job, fraction, text, on_progress))
         job = self.jobs.submit(runner); job_ready.set(); self._watch_terminal(job, on_terminal)
         return job
+
+    def submit_story_compose(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        story_id = _required(payload, "story_id", str); expected = _required(payload, "expected_revision", int)
+        story = self.stories.get(story_id)
+        if story["revision"] != expected: raise GenerationError("story changed in another window; reload before composing")
+        facts = self._story_composition_facts(story)
+        ready = __import__("threading").Event(); job: Job | None = None; output_paths: OutputPaths | None = None
+        def runner(_progress, cancelled) -> None:
+            nonlocal output_paths
+            ready.wait(); assert job is not None
+            try:
+                self._on_progress(job, 0.05, "Validating story scenes", on_progress)
+                output_paths = allocate(self.paths.outputs)
+                contributors = compose_hard_cuts(story, self.paths.outputs, output_paths.partial_dir / "video.mp4", target_facts=facts, cancelled=cancelled)
+                self._on_progress(job, 0.9, "Saving immutable story movie", on_progress)
+                request = {"capability": "story_composition", "story_id": story_id, "story_revision": expected, "width": facts["width"], "height": facts["height"], "frames": facts["frames"], "fps": facts["fps"], "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Hard cuts"}
+                self._write_metadata(output_paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", "expected_duration_seconds": facts["frames"] / facts["fps"]}, None)
+                metadata_path = output_paths.partial_dir / "metadata.json"; metadata = json.loads(metadata_path.read_text()); metadata["lineage"] = [{"output_id": item, "relation": "story_scene"} for item in contributors]; metadata_path.write_text(json.dumps(metadata, sort_keys=True, separators=(",", ":")))
+                final = promote(output_paths); self._index_output(final / "metadata.json")
+                saved = self.stories.record_composition({"story_id": story_id, "expected_revision": expected, "output_id": output_paths.output_id})
+                self._job_outputs[job.job_id] = output_paths.output_id
+                self._on_progress(job, 1.0, f"Story revision {saved['revision']} composed", on_progress)
+            except BaseException:
+                if output_paths and output_paths.partial_dir.exists(): shutil.rmtree(output_paths.partial_dir)
+                raise
+        job = self.jobs.submit(runner); ready.set(); self._watch_terminal(job, on_terminal); return job
+
+    def _story_composition_facts(self, story: dict) -> dict[str, int]:
+        """Require the current approved selections to share measured media facts."""
+        expected: tuple[int, int, int] | None = None
+        total_frames = 0
+        for scene in story.get("scenes", []):
+            if not scene.get("approved"):
+                raise GenerationError("all story scenes must be approved before composition")
+            artifact = scene.get("artifacts", {}).get("narration") or scene.get("artifacts", {}).get("clip")
+            if not isinstance(artifact, dict) or not isinstance(artifact.get("output_id"), str):
+                raise GenerationError("every approved scene needs a current clip or narration")
+            try:
+                metadata = json.loads((self.paths.outputs / artifact["output_id"] / "metadata.json").read_text())
+                request = metadata["request"]; values = tuple(request[key] for key in ("width", "height", "fps"))
+                if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in values):
+                    raise ValueError()
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise GenerationError("current story scene media facts are unavailable") from error
+            if expected is None: expected = values
+            elif values != expected: raise GenerationError("approved story scenes have mismatched media facts")
+            start = float(scene.get("shot", {}).get("trim_start_seconds", 0.0)); end = float(scene.get("shot", {}).get("trim_end_seconds", 0.0))
+            frames = request.get("frames")
+            if isinstance(frames, bool) or not isinstance(frames, int) or frames <= 0: raise GenerationError("current story scene duration is unavailable")
+            clip_frames = frames - round(start * values[2]) if not end else round((end - start) * values[2])
+            if clip_frames <= 0: raise GenerationError("story trim exceeds the current scene duration")
+            total_frames += clip_frames
+        if expected is None: raise GenerationError("a story needs at least one approved scene")
+        return {"width": expected[0], "height": expected[1], "fps": expected[2], "frames": total_frames}
 
     def library_payload(self) -> list[dict]:
         """Return bounded metadata only; media paths never cross IPC."""

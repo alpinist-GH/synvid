@@ -94,6 +94,9 @@ struct StorySceneUpdateRequest {
     prompt: String,
     narration: String,
     approved: bool,
+    trim_start_seconds: f64,
+    trim_end_seconds: f64,
+    narration_muted: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +119,44 @@ struct StoryRenderRequest {
     expected_revision: i64,
     through: String,
     scene_ids: Option<Vec<String>>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryImportStillRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_id: String,
+    source_image_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryImportSubtitlesRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_id: String,
+    source_subtitle_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryImportNarrationRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_id: String,
+    source_audio_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryImportClipRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_id: String,
+    source_clip_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryProjectExportRequest {
+    story_id: String,
+    self_contained: bool,
 }
 
 fn valid_story_id(value: &str) -> bool {
@@ -396,10 +437,16 @@ fn story_update_scene(
         || !valid_story_revision(request.expected_revision)
         || request.prompt.len() > 4_000
         || request.narration.len() > 4_000
+        || !request.trim_start_seconds.is_finite()
+        || !request.trim_end_seconds.is_finite()
+        || request.trim_start_seconds < 0.0
+        || request.trim_end_seconds < 0.0
+        || (request.trim_end_seconds > 0.0
+            && request.trim_end_seconds <= request.trim_start_seconds)
     {
         return Err("Invalid scene update.".into());
     }
-    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_update_scene", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "prompt": request.prompt, "narration": request.narration, "approved": request.approved}))?)
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_update_scene", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "prompt": request.prompt, "narration": request.narration, "approved": request.approved, "trim_start_seconds": request.trim_start_seconds, "trim_end_seconds": request.trim_end_seconds, "narration_muted": request.narration_muted}))?)
 }
 
 #[tauri::command]
@@ -438,7 +485,10 @@ fn render_story(
 ) -> Result<Value, String> {
     if !valid_story_id(&request.story_id)
         || !valid_story_revision(request.expected_revision)
-        || !matches!(request.through.as_str(), "still" | "clip" | "narration")
+        || !matches!(
+            request.through.as_str(),
+            "still" | "clip" | "narration" | "subtitles"
+        )
         || request
             .scene_ids
             .as_ref()
@@ -447,6 +497,124 @@ fn render_story(
         return Err("Invalid story render request.".into());
     }
     response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("render_story", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "through": request.through, "scene_ids": request.scene_ids}))?)
+}
+
+#[tauri::command]
+fn compose_story(
+    request: StoryDraftRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id) || !valid_story_revision(request.expected_revision) {
+        return Err("Invalid story composition request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("compose_story", json!({"story_id": request.story_id, "expected_revision": request.expected_revision}))?)
+}
+
+#[tauri::command]
+fn story_import_still(
+    request: StoryImportStillRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_id(&request.scene_id)
+        || !valid_story_revision(request.expected_revision)
+        || !request.source_image_id.starts_with("image-")
+        || request.source_image_id.len() > 128
+    {
+        return Err("Invalid story image import request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_import_still", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "source_image_id": request.source_image_id}))?)
+}
+
+#[tauri::command]
+fn story_import_subtitles(
+    request: StoryImportSubtitlesRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_id(&request.scene_id)
+        || !valid_story_revision(request.expected_revision)
+        || !request.source_subtitle_id.starts_with("subtitle-")
+        || request.source_subtitle_id.len() > 128
+    {
+        return Err("Invalid story subtitle import request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_import_subtitles", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "source_subtitle_id": request.source_subtitle_id}))?)
+}
+
+#[tauri::command]
+fn story_import_narration(
+    request: StoryImportNarrationRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_id(&request.scene_id)
+        || !valid_story_revision(request.expected_revision)
+        || !request.source_audio_id.starts_with("audio-")
+        || request.source_audio_id.len() > 128
+    {
+        return Err("Invalid story narration import request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_import_narration", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "source_audio_id": request.source_audio_id}))?)
+}
+
+#[tauri::command]
+fn story_import_clip(
+    request: StoryImportClipRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_id(&request.scene_id)
+        || !valid_story_revision(request.expected_revision)
+        || !request.source_clip_id.starts_with("clip-")
+    {
+        return Err("Invalid story clip import request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_import_clip", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "source_clip_id": request.source_clip_id}))?)
+}
+
+#[tauri::command]
+fn story_export_project(
+    request: StoryProjectExportRequest,
+    app: tauri::AppHandle,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id) {
+        return Err("Invalid story project export request.".into());
+    }
+    let response = response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "story_export_project",
+                json!({"story_id": request.story_id, "self_contained": request.self_contained}),
+            )?,
+    )?;
+    let archive_name = response
+        .get("archive_name")
+        .and_then(Value::as_str)
+        .ok_or("Worker returned an invalid project archive.")?;
+    if archive_name != format!("{}.synvidstory", request.story_id) {
+        return Err("Worker returned an invalid project archive.".into());
+    }
+    let Some(destination) = rfd::FileDialog::new()
+        .set_file_name(archive_name)
+        .save_file()
+    else {
+        return Ok(json!({"saved": false}));
+    };
+    let source = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/stories/exports")
+        .join(archive_name);
+    if !source.is_file() || source.is_symlink() {
+        return Err("The exported project archive is unavailable.".into());
+    }
+    fs::copy(source, destination).map_err(|_| "Could not save the project archive.")?;
+    Ok(json!({"saved": true, "self_contained": request.self_contained}))
 }
 
 #[tauri::command]
@@ -570,6 +738,179 @@ fn choose_source_image(app: tauri::AppHandle) -> Result<Value, String> {
     Ok(json!({"sourceImageId": id}))
 }
 
+#[tauri::command]
+fn choose_story_subtitles(app: tauri::AppHandle) -> Result<Value, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("SubRip subtitles", &["srt"])
+        .pick_file()
+    else {
+        return Ok(json!({"sourceSubtitleId": null}));
+    };
+    let metadata =
+        fs::symlink_metadata(&source).map_err(|_| "The selected subtitle file is unavailable.")?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 4 * 1024 * 1024
+    {
+        return Err("Choose a regular SRT file smaller than 4 MB.".into());
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable.")?
+        .as_nanos();
+    let id = format!("subtitle-{nonce:x}");
+    let imports = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/temporary/imports");
+    fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure subtitle storage.")?;
+    fs::copy(&source, imports.join(&id))
+        .map_err(|_| "Could not import the selected subtitle file.")?;
+    Ok(json!({"sourceSubtitleId": id}))
+}
+
+#[tauri::command]
+fn choose_story_narration(app: tauri::AppHandle) -> Result<Value, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("WAV audio", &["wav"])
+        .pick_file()
+    else {
+        return Ok(json!({"sourceAudioId": null}));
+    };
+    let metadata =
+        fs::symlink_metadata(&source).map_err(|_| "The selected narration file is unavailable.")?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 64 * 1024 * 1024
+    {
+        return Err("Choose a regular WAV file smaller than 64 MB.".into());
+    }
+    let mut header = [0_u8; 12];
+    fs::File::open(&source)
+        .map_err(|_| "The selected narration file is unavailable.")?
+        .read_exact(&mut header)
+        .map_err(|_| "The selected narration file is invalid.")?;
+    if header[..4] != *b"RIFF" || header[8..12] != *b"WAVE" {
+        return Err("Choose a valid WAV file.".into());
+    }
+    let id = format!(
+        "audio-{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable.")?
+            .as_nanos()
+    );
+    let imports = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/temporary/imports");
+    fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure narration storage.")?;
+    fs::copy(&source, imports.join(&id))
+        .map_err(|_| "Could not import the selected narration file.")?;
+    Ok(json!({"sourceAudioId": id}))
+}
+
+#[tauri::command]
+fn choose_story_clip(app: tauri::AppHandle) -> Result<Value, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("Video", &["mp4", "mov"])
+        .pick_file()
+    else {
+        return Ok(json!({"sourceClipId": null}));
+    };
+    let metadata =
+        fs::symlink_metadata(&source).map_err(|_| "The selected motion clip is unavailable.")?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 512 * 1024 * 1024
+    {
+        return Err("Choose a regular MP4 or MOV clip smaller than 512 MB.".into());
+    }
+    let mut header = [0_u8; 12];
+    fs::File::open(&source)
+        .map_err(|_| "The selected motion clip is unavailable.")?
+        .read_exact(&mut header)
+        .map_err(|_| "The selected motion clip is invalid.")?;
+    if &header[4..8] != b"ftyp" {
+        return Err("Choose a valid MP4 or MOV clip.".into());
+    }
+    let id = format!(
+        "clip-{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable.")?
+            .as_nanos()
+    );
+    let imports = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/temporary/imports");
+    fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure clip storage.")?;
+    fs::copy(&source, imports.join(&id))
+        .map_err(|_| "Could not import the selected motion clip.")?;
+    Ok(json!({"sourceClipId": id}))
+}
+
+#[tauri::command]
+fn choose_story_project(app: tauri::AppHandle) -> Result<Value, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("SynVid Story Project", &["synvidstory"])
+        .pick_file()
+    else {
+        return Ok(json!({"sourceProjectId": null}));
+    };
+    let metadata =
+        fs::symlink_metadata(&source).map_err(|_| "The selected story project is unavailable.")?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 2 * 1024 * 1024 * 1024
+    {
+        return Err("Choose a regular SynVid story project smaller than 2 GB.".into());
+    }
+    let id = format!(
+        "storyproj-{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable.")?
+            .as_nanos()
+    );
+    let imports = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/temporary/imports");
+    fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure story project storage.")?;
+    fs::copy(&source, imports.join(&id))
+        .map_err(|_| "Could not import the selected story project.")?;
+    Ok(json!({"sourceProjectId": id}))
+}
+
+#[tauri::command]
+fn story_import_project(
+    source_project_id: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !source_project_id.starts_with("storyproj-") || source_project_id.len() > 128 {
+        return Err("Invalid story project import request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "story_import_project",
+                json!({"source_project_id": source_project_id}),
+            )?,
+    )
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(WorkerSupervisor::new()))
@@ -607,8 +948,19 @@ pub fn run() {
             story_reorder_scenes,
             story_draft_scenes,
             render_story,
+            compose_story,
+            story_import_still,
+            story_import_subtitles,
+            story_import_narration,
+            story_import_clip,
+            story_export_project,
+            story_import_project,
             export_video,
             choose_source_image,
+            choose_story_subtitles,
+            choose_story_narration,
+            choose_story_clip,
+            choose_story_project,
             cancel
         ])
         .run(tauri::generate_context!())

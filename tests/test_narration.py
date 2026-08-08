@@ -8,7 +8,7 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
-from worker.narration import KokoroNarrator, NarrationError, pad_or_reject_wav, replace_audio, wav_duration_seconds
+from worker.narration import KokoroNarrator, NarrationError, pad_or_reject_wav, replace_audio, synthesize_segmented, wav_duration_seconds, write_srt
 from worker.paths import AppPaths
 from worker.providers.fake import FakeProvider
 from worker.resources import Estimate
@@ -68,6 +68,15 @@ class NarrationTests(unittest.TestCase):
             FakeNarrator(1.2).synthesize("test", wav, lambda: False)
             with self.assertRaisesRegex(NarrationError, r"1.20s.*1.00s"):
                 pad_or_reject_wav(wav, 1.0)
+
+    def test_segmented_narration_uses_measured_sentence_boundaries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "voice.wav"
+            cues = synthesize_segmented(FakeNarrator(0.1), "First. Second!", destination, lambda: False)
+            self.assertEqual([cue["text"] for cue in cues], ["First.", "Second!"])
+            self.assertAlmostEqual(cues[0]["end"], 0.1); self.assertAlmostEqual(cues[1]["end"], 0.2)
+            subtitle = Path(temp) / "captions.srt"; write_srt(subtitle, cues)
+            self.assertIn("00:00:00,100 --> 00:00:00,200", subtitle.read_text())
 
     def test_audio_replacement_uses_bundled_ffmpeg_without_a_shell(self):
         with tempfile.TemporaryDirectory() as temp, patch("imageio_ffmpeg.get_ffmpeg_exe", return_value="/fixed/ffmpeg"), patch("worker.narration.subprocess.run") as run:
