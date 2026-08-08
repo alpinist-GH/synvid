@@ -59,6 +59,75 @@ struct NarrateRequest {
     text: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryCreateRequest {
+    title: String,
+    premise: String,
+    style_bible: String,
+    aspect_ratio: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryUpdateRequest {
+    story_id: String,
+    expected_revision: i64,
+    title: String,
+    premise: String,
+    style_bible: String,
+    aspect_ratio: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorySceneRequest {
+    story_id: String,
+    expected_revision: i64,
+    prompt: String,
+    narration: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorySceneUpdateRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_id: String,
+    prompt: String,
+    narration: String,
+    approved: bool,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryReorderRequest {
+    story_id: String,
+    expected_revision: i64,
+    scene_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryDraftRequest {
+    story_id: String,
+    expected_revision: i64,
+    count: i64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoryRenderRequest {
+    story_id: String,
+    expected_revision: i64,
+    through: String,
+    scene_ids: Option<Vec<String>>,
+}
+
+fn valid_story_id(value: &str) -> bool {
+    value.len() == 36
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+}
+fn valid_story_revision(value: i64) -> bool {
+    value > 0
+}
+
 fn response_payload(reply: Value) -> Result<Value, String> {
     match reply.get("kind").and_then(Value::as_str) {
         Some("error") => Err(reply
@@ -243,6 +312,144 @@ fn narrate(
 }
 
 #[tauri::command]
+fn story_create(
+    request: StoryCreateRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if request.title.trim().is_empty()
+        || request.title.len() > 4_000
+        || request.premise.len() > 4_000
+        || request.style_bible.len() > 4_000
+        || !matches!(request.aspect_ratio.as_str(), "16:9" | "9:16" | "1:1")
+    {
+        return Err("Invalid story details.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_create", json!({"title": request.title, "premise": request.premise, "style_bible": request.style_bible, "aspect_ratio": request.aspect_ratio}))?)
+}
+
+#[tauri::command]
+fn story_list(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("story_list", json!({}))?,
+    )
+}
+
+#[tauri::command]
+fn story_get(
+    story_id: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&story_id) {
+        return Err("Invalid story ID.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("story_get", json!({"story_id": story_id}))?,
+    )
+}
+
+#[tauri::command]
+fn story_update(
+    request: StoryUpdateRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_revision(request.expected_revision)
+        || request.title.trim().is_empty()
+        || request.title.len() > 4_000
+        || request.premise.len() > 4_000
+        || request.style_bible.len() > 4_000
+        || !matches!(request.aspect_ratio.as_str(), "16:9" | "9:16" | "1:1")
+    {
+        return Err("Invalid story update.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_update", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "title": request.title, "premise": request.premise, "style_bible": request.style_bible, "aspect_ratio": request.aspect_ratio}))?)
+}
+
+#[tauri::command]
+fn story_add_scene(
+    request: StorySceneRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_revision(request.expected_revision)
+        || request.prompt.len() > 4_000
+        || request.narration.len() > 4_000
+    {
+        return Err("Invalid scene.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_add_scene", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "prompt": request.prompt, "narration": request.narration}))?)
+}
+
+#[tauri::command]
+fn story_update_scene(
+    request: StorySceneUpdateRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_id(&request.scene_id)
+        || !valid_story_revision(request.expected_revision)
+        || request.prompt.len() > 4_000
+        || request.narration.len() > 4_000
+    {
+        return Err("Invalid scene update.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_update_scene", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_id": request.scene_id, "prompt": request.prompt, "narration": request.narration, "approved": request.approved}))?)
+}
+
+#[tauri::command]
+fn story_reorder_scenes(
+    request: StoryReorderRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_revision(request.expected_revision)
+        || request.scene_ids.len() > 64
+        || !request.scene_ids.iter().all(|item| valid_story_id(item))
+    {
+        return Err("Invalid scene order.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_reorder_scenes", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "scene_ids": request.scene_ids}))?)
+}
+
+#[tauri::command]
+fn story_draft_scenes(
+    request: StoryDraftRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_revision(request.expected_revision)
+        || !(1..=8).contains(&request.count)
+    {
+        return Err("Invalid story draft request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("story_draft_scenes", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "count": request.count}))?)
+}
+
+#[tauri::command]
+fn render_story(
+    request: StoryRenderRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id)
+        || !valid_story_revision(request.expected_revision)
+        || !matches!(request.through.as_str(), "still" | "clip" | "narration")
+        || request
+            .scene_ids
+            .as_ref()
+            .is_some_and(|ids| ids.len() > 64 || !ids.iter().all(|id| valid_story_id(id)))
+    {
+        return Err("Invalid story render request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("render_story", json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "through": request.through, "scene_ids": request.scene_ids}))?)
+}
+
+#[tauri::command]
 fn cancel(
     job_id: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
@@ -391,6 +598,15 @@ pub fn run() {
             edit_video,
             edit_image,
             narrate,
+            story_create,
+            story_list,
+            story_get,
+            story_update,
+            story_add_scene,
+            story_update_scene,
+            story_reorder_scenes,
+            story_draft_scenes,
+            render_story,
             export_video,
             choose_source_image,
             cancel

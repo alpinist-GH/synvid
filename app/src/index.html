@@ -13,8 +13,7 @@
         <h1 id="app-title">SynVid</h1>
         <nav aria-label="Workspace">
           <button class="nav-item" aria-current="page" type="button">Create</button>
-          <button class="nav-item" type="button" disabled aria-describedby="story-note">Story</button>
-          <p id="story-note" class="sr-only">Story Mode is planned for a later stage.</p>
+          <button id="story-button" class="nav-item" type="button">Story</button>
           <button id="library-button" class="nav-item" type="button">Library</button>
         </nav>
         <button id="recovery-button" class="nav-item settings" type="button">Recovery Center</button>
@@ -134,6 +133,22 @@
       <p class="field-help">Library metadata remains local. Select an item to promote it as this window’s current variant.</p>
       <ol id="library-list" class="variant-list"></ol>
       <button class="secondary close-dialog" type="button">Close</button>
+    </dialog>
+    <dialog id="story-dialog" aria-labelledby="story-title">
+      <h2 id="story-title">Story Mode</h2>
+      <p class="field-help">Manual scene authoring is local and saves atomically. Draft scenes, rendering, subtitles, and composition remain gated follow-up work.</p>
+      <label for="story-list">Saved stories</label><select id="story-list"><option value="">Create a new story</option></select>
+      <label for="story-name">Title</label><input id="story-name" maxlength="4000" />
+      <label for="story-premise">Premise</label><textarea id="story-premise" maxlength="4000"></textarea>
+      <label for="story-style">Style bible</label><textarea id="story-style" maxlength="4000"></textarea>
+      <label for="story-aspect">Aspect ratio</label><select id="story-aspect"><option>16:9</option><option>9:16</option><option>1:1</option></select>
+      <div class="dialog-actions"><button id="save-story" class="generate" type="button">Save story</button></div>
+      <div class="dialog-actions"><button id="draft-story-scenes" type="button" disabled>Draft scenes locally</button><p id="story-draft-note" class="field-help">Drafting is optional and never changes the project until you add or edit a scene.</p><ol id="story-draft-list" class="variant-list"></ol></div>
+      <section class="variants" aria-labelledby="scene-title"><div class="section-heading"><h3 id="scene-title">Scenes</h3><p id="story-revision">No story selected</p></div><ol id="story-scenes" class="variant-list"></ol></section>
+      <label for="scene-prompt">Scene prompt</label><textarea id="scene-prompt" maxlength="4000"></textarea>
+      <label for="scene-narration">Narration (optional)</label><textarea id="scene-narration" maxlength="4000"></textarea>
+      <label><input id="scene-approved" type="checkbox" /> Approved for later rendering</label>
+      <div class="dialog-actions"><button id="add-story-scene" type="button">Add scene</button><button id="save-story-scene" type="button" disabled>Save selected scene</button><button id="move-scene-earlier" type="button" disabled>Move earlier</button><button id="move-scene-later" type="button" disabled>Move later</button><button id="render-storyboard" type="button" disabled>Render storyboard</button><button id="render-story-clips" type="button" disabled>Render motion clips</button><button id="render-story-narration" type="button" disabled>Render narration</button><button class="secondary close-dialog" type="button">Close</button></div>
     </dialog>
     <script type="module" src="/main.js"></script>
   </body>

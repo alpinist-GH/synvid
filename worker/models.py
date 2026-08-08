@@ -54,6 +54,11 @@ _DIFFUSERS_FILES = (
 
 _HF_LFS = "Hugging Face LFS SHA-256 metadata at the pinned commit"
 
+_TRANSFORMERS_FILES = (
+    "config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json",
+    "merges.txt", "vocab.json", "model.safetensors", "LICENSE", "README.md",
+)
+
 REGISTRY = {
     "ltx-video": ModelSpec("ltx-video", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Lightricks/LTX-Video", "8984fa25007f376c1a299016d0957a37a2f797bb", "LTX-Video Open Weights License", 24.0, True, _DIFFUSERS_FILES + ("ltxv-2b-0.9.8-distilled.safetensors",), _HF_LFS),
     "flux-schnell": ModelSpec("flux-schnell", frozenset({Capability.IMAGE_GENERATION}), "shareable", "black-forest-labs/FLUX.1-schnell", "741f7c3ce8b383c54771c7003378a50191e9efe9", "Apache-2.0", 54.0, True, _DIFFUSERS_FILES + ("flux1-schnell.safetensors",), _HF_LFS),
@@ -63,6 +68,7 @@ REGISTRY = {
     # until a measured MPS profile exists; its sizeable checkpoint must not be
     # presented as a supported feature merely because it is permissively licensed.
     "qwen-image-edit": ModelSpec("qwen-image-edit", frozenset({Capability.IMAGE_EDITING}), "shareable", "Qwen/Qwen-Image-Edit", "ac7f9318f633fc4b5778c59367c8128225f1e3de", "Apache-2.0", 57.7, True, _DIFFUSERS_FILES + ("processor/*.json",), _HF_LFS),
+    "qwen-story-planner": ModelSpec("qwen-story-planner", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
     "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS),
     "wan2.1-14b": ModelSpec("wan2.1-14b", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS),
 }

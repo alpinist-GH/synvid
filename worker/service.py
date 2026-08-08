@@ -18,6 +18,9 @@ from .paths import AppPaths
 from .providers.base import Capability, OperationRequest, Provider
 from .resources import Estimate, ReservationBook
 from .store import Store
+from .stories import StoryStore
+from .story_planner import QwenStoryPlanner
+from .story_render import StoryRenderer
 
 
 class GenerationError(ValueError):
@@ -60,6 +63,8 @@ class GenerationService:
         self.jobs = JobController()
         self.reservations = ReservationBook(paths.root)
         self.store = Store(paths.database)
+        self.stories = StoryStore(paths.stories)
+        self.story_planner = QwenStoryPlanner(paths.models / "qwen-story-planner")
         self._job_outputs: dict[str, str] = {}
         self.narrator = narrator
 
@@ -464,6 +469,128 @@ class GenerationService:
             temporary.unlink(missing_ok=True)
             raise GenerationError("could not create export") from error
         return {"output_id": output_id, "profile": profile, "export_file": f"exports/{profile}.mp4"}
+
+    def create_story(self, payload: dict) -> dict:
+        return self.stories.create(payload)
+
+    def list_stories(self) -> list[dict]:
+        return self.stories.list()
+
+    def get_story(self, story_id: str) -> dict:
+        return self.stories.get(story_id)
+
+    def update_story(self, payload: dict) -> dict:
+        return self.stories.update(payload)
+
+    def add_story_scene(self, payload: dict) -> dict:
+        return self.stories.add_scene(payload)
+
+    def update_story_scene(self, payload: dict) -> dict:
+        return self.stories.update_scene(payload)
+
+    def reorder_story_scenes(self, payload: dict) -> dict:
+        return self.stories.reorder(payload)
+
+    def draft_story_scenes(self, payload: dict) -> dict:
+        story_id, expected = payload.get("story_id"), payload.get("expected_revision")
+        story = self.stories.get(story_id)
+        if story["revision"] != expected: raise GenerationError("story changed in another window; reload before drafting")
+        count = payload.get("count", 3)
+        if isinstance(count, bool) or not isinstance(count, int): raise GenerationError("requested scene count is invalid")
+        try:
+            scenes = self.story_planner.draft(story["premise"], story["style_bible"], count)
+        finally:
+            # Story drafting must not leave the instruction model resident
+            # beside diffusion or narration without a separate measured gate.
+            self.story_planner.unload()
+        return {"story_id": story_id, "revision": expected, "scenes": scenes}
+
+    def record_story_artifact(self, payload: dict) -> dict:
+        return self.stories.record_artifact(payload)
+
+    def submit_story_render(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        """Run Story Mode as one cancellable job, checkpointing each scene step.
+
+        The renderer intentionally calls providers directly inside this single
+        controller job: submitting child jobs would violate the product's
+        single-active-job contract and make a crash indistinguishable from a
+        completed scene checkpoint.
+        """
+        story_id = _required(payload, "story_id", str)
+        expected = _required(payload, "expected_revision", int)
+        through = payload.get("through", "clip")
+        if through not in {"still", "clip", "narration"}:
+            raise GenerationError("story render phase is unavailable")
+        scene_ids_raw = payload.get("scene_ids")
+        if scene_ids_raw is not None and (not isinstance(scene_ids_raw, list) or len(scene_ids_raw) > 64 or not all(isinstance(item, str) for item in scene_ids_raw)):
+            raise GenerationError("selected story scenes are invalid")
+        scene_ids = set(scene_ids_raw) if scene_ids_raw is not None else None
+        image_provider = next((item for item in self._providers.values() if Capability.IMAGE_GENERATION in item.facts.capabilities), None)
+        video_provider = next((item for item in self._providers.values() if Capability.VIDEO_GENERATION in item.facts.capabilities), None)
+        if image_provider is None or video_provider is None:
+            raise GenerationError("Story Mode requires one validated image and video model")
+        try:
+            image_profile = image_provider.measured_profile()
+            video_profile = video_provider.measured_recipes().recipes["Balanced"]
+        except (AttributeError, KeyError, OSError, RuntimeError, ValueError) as error:
+            raise GenerationError("Story Mode requires measured image and video recipes") from error
+        job_ready = __import__("threading").Event(); job: Job | None = None
+
+        def save(provider: Provider, request_values: dict, result: dict[str, object]) -> str:
+            paths = allocate(self.paths.outputs)
+            try:
+                request = OperationRequest(operation_id=paths.output_id, output_dir=paths.partial_dir, **request_values)
+                actual = provider.run(request, lambda _fraction, _text: None, lambda: job.cancel_requested if job else True)
+                media_file = actual.get("media_file")
+                if not isinstance(media_file, str) or not resolve_owned_file(self.paths.outputs / ".partial", paths.output_id, media_file).is_file():
+                    raise GenerationError("story provider did not produce valid media")
+                self._write_metadata(paths, request_values, actual, provider)
+                final = promote(paths); self._index_output(final / "metadata.json")
+                return paths.output_id
+            except BaseException:
+                if paths.partial_dir.exists(): shutil.rmtree(paths.partial_dir)
+                raise
+
+        def runner(_progress, cancelled) -> None:
+            job_ready.wait(); assert job is not None
+            def make_still(scene: dict) -> str:
+                return save(image_provider, {"capability": Capability.IMAGE_GENERATION, "prompt": scene["prompt"], "seed": 0, "width": image_profile.width, "height": image_profile.height, "frames": 1, "fps": 1, "steps": image_profile.steps, "guidance_scale": image_profile.guidance_scale, "recipe": "Measured"}, {})
+            def make_clip(scene: dict, still_id: str) -> str:
+                source = self.paths.outputs / still_id / "image.png"
+                if not source.is_file():
+                    raise GenerationError("current story still is unavailable")
+                return save(video_provider, {"capability": Capability.VIDEO_GENERATION, "prompt": scene["prompt"], "seed": 0, "width": video_profile.width, "height": video_profile.height, "frames": video_profile.frames, "fps": video_profile.fps, "steps": video_profile.steps, "guidance_scale": video_profile.guidance_scale, "recipe": "Balanced", "source_image": source, "source_output_id": still_id}, {})
+            def make_narration(scene: dict, clip_id: str) -> str:
+                if self.narrator is None:
+                    raise GenerationError("story narration is not available")
+                try:
+                    metadata = json.loads((self.paths.outputs / clip_id / "metadata.json").read_text())
+                    media_file = metadata["result"]["media_file"]
+                    source = resolve_owned_file(self.paths.outputs, clip_id, media_file)
+                    if not source.is_file():
+                        raise ValueError()
+                except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise GenerationError("current story clip is unavailable") from error
+                paths = allocate(self.paths.outputs)
+                try:
+                    wav = paths.partial_dir / "narration.wav"
+                    self.narrator.synthesize(scene["narration"], wav, cancelled)
+                    facts = pad_or_reject_wav(wav, video_profile.frames / video_profile.fps)
+                    replace_audio(source, wav, paths.partial_dir / "video.mp4", video_profile.frames / video_profile.fps)
+                    wav.unlink(missing_ok=True)
+                    request = {"capability": Capability.NARRATION, "text": scene["narration"], "source_output_id": clip_id, "width": video_profile.width, "height": video_profile.height, "frames": video_profile.frames, "fps": video_profile.fps, "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Story narration"}
+                    self._write_metadata(paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", **facts}, None)
+                    final = promote(paths); self._index_output(final / "metadata.json")
+                    return paths.output_id
+                except BaseException:
+                    if paths.partial_dir.exists(): shutil.rmtree(paths.partial_dir)
+                    raise
+                finally:
+                    self.narrator.unload()
+            renderer = StoryRenderer(self.stories, make_still, make_clip, make_narration)
+            renderer.render(story_id, expected, scene_ids=scene_ids, through=through, cancelled=cancelled, progress=lambda fraction, text: self._on_progress(job, fraction, text, on_progress))
+        job = self.jobs.submit(runner); job_ready.set(); self._watch_terminal(job, on_terminal)
+        return job
 
     def library_payload(self) -> list[dict]:
         """Return bounded metadata only; media paths never cross IPC."""

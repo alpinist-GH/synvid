@@ -7,6 +7,7 @@ const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
 const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+let activeStory = null; let activeSceneId = null; let draftProposals = [];
 const $ = (selector) => document.querySelector(selector);
 const connection = $("#connection");
 const jobStatus = $("#job-status");
@@ -114,6 +115,24 @@ async function showRecovery() {
     $("#recovery-preview").textContent = `${count} incomplete output${count === 1 ? "" : "s"} and ${reserved} reserved byte${reserved === 1 ? "" : "s"} can be safely recovered. Completed output will not be deleted.`;
   } catch { $("#recovery-preview").textContent = "Worker unavailable. Reopen SynVid to inspect recovery state."; }
 }
+function renderStory(story) {
+  activeStory = story; if (!story) activeSceneId = null; $("#story-name").value = story?.title || ""; $("#story-premise").value = story?.premise || ""; $("#story-style").value = story?.style_bible || ""; $("#story-aspect").value = story?.aspect_ratio || "16:9";
+  $("#story-revision").textContent = story ? `Revision ${story.revision} · ${story.scenes.length} scene${story.scenes.length === 1 ? "" : "s"}` : "No story selected";
+  const list = $("#story-scenes"); list.replaceChildren();
+  for (const [index, scene] of (story?.scenes || []).entries()) { const item = document.createElement("li"); const button = document.createElement("button"); button.type = "button"; button.className = "variant"; button.setAttribute("aria-pressed", String(scene.scene_id === activeSceneId)); button.textContent = `${index + 1}. ${scene.prompt || "Untitled scene"}${scene.approved ? " · approved" : " · draft"}`; button.addEventListener("click", () => selectStoryScene(scene)); item.append(button); list.append(item); }
+  $("#add-story-scene").disabled = !story;
+  $("#draft-story-scenes").disabled = !story || !story.premise;
+  $("#save-story-scene").disabled = !story || !activeSceneId; $("#move-scene-earlier").disabled = !story || !activeSceneId; $("#move-scene-later").disabled = !story || !activeSceneId;
+  $("#render-storyboard").disabled = !story || !story.scenes.some((scene) => scene.approved); $("#render-story-clips").disabled = !story || !story.scenes.some((scene) => scene.approved);
+  $("#render-story-narration").disabled = !story || !story.scenes.some((scene) => scene.approved && scene.narration);
+}
+function selectStoryScene(scene) { activeSceneId = scene.scene_id; $("#scene-prompt").value = scene.prompt || ""; $("#scene-narration").value = scene.narration || ""; $("#scene-approved").checked = Boolean(scene.approved); renderStory(activeStory); }
+function renderDraftProposals() { const list = $("#story-draft-list"); list.replaceChildren(); for (const [index, proposal] of draftProposals.entries()) { const item = document.createElement("li"); const button = document.createElement("button"); button.type = "button"; button.className = "variant"; button.textContent = `Use draft ${index + 1}: ${proposal.prompt}`; button.addEventListener("click", () => { activeSceneId = null; $("#scene-prompt").value = proposal.prompt; $("#scene-narration").value = proposal.narration; $("#scene-approved").checked = false; $("#story-draft-note").textContent = "Draft copied into the editable scene fields. Add it to save."; }); item.append(button); list.append(item); } }
+async function showStory() {
+  const dialog = $("#story-dialog"); const select = $("#story-list"); select.replaceChildren(new Option("Create a new story", ""));
+  try { const { stories = [] } = await invoke("story_list"); for (const story of stories) select.add(new Option(story.title, story.story_id)); renderStory(null); dialog.showModal(); }
+  catch (reason) { setError(String(reason)); }
+}
 
 restoreDraft();
 if (!localStorage.getItem(ONBOARDING_KEY)) $("#onboarding").showModal();
@@ -176,6 +195,21 @@ $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); save
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#library-button").addEventListener("click", showLibrary); $("#recovery-button").addEventListener("click", showRecovery);
+$("#story-button").addEventListener("click", showStory);
+$("#story-list").addEventListener("change", async () => { const id = $("#story-list").value; if (!id) return renderStory(null); try { renderStory(await invoke("story_get", { storyId: id })); } catch (reason) { setError(String(reason)); } });
+$("#save-story").addEventListener("click", async () => {
+  const request = { title: $("#story-name").value.trim(), premise: $("#story-premise").value.trim(), styleBible: $("#story-style").value.trim(), aspectRatio: $("#story-aspect").value };
+  if (!request.title) return setError("Add a story title before saving.");
+  try { const saved = activeStory ? await invoke("story_update", { request: { ...request, storyId: activeStory.story_id, expectedRevision: activeStory.revision } }) : await invoke("story_create", { request }); renderStory(saved); $("#story-list").value = saved.story_id; } catch (reason) { setError(String(reason)); }
+});
+$("#add-story-scene").addEventListener("click", async () => { if (!activeStory) return; try { const saved = await invoke("story_add_scene", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, prompt: $("#scene-prompt").value.trim(), narration: $("#scene-narration").value.trim() } }); $("#scene-prompt").value = ""; $("#scene-narration").value = ""; renderStory(saved); } catch (reason) { setError(String(reason)); } });
+$("#draft-story-scenes").addEventListener("click", async () => { if (!activeStory) return; const button = $("#draft-story-scenes"); button.disabled = true; $("#story-draft-note").textContent = "Drafting scenes locally…"; try { const result = await invoke("story_draft_scenes", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, count: 3 } }); draftProposals = result.scenes; renderDraftProposals(); $("#story-draft-note").textContent = "Choose a proposal to copy it into editable scene fields; it is not saved yet."; } catch (reason) { $("#story-draft-note").textContent = String(reason); } finally { button.disabled = false; } });
+$("#save-story-scene").addEventListener("click", async () => { if (!activeStory || !activeSceneId) return; try { const saved = await invoke("story_update_scene", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, sceneId: activeSceneId, prompt: $("#scene-prompt").value.trim(), narration: $("#scene-narration").value.trim(), approved: $("#scene-approved").checked } }); renderStory(saved); } catch (reason) { setError(String(reason)); } });
+async function moveStoryScene(direction) { if (!activeStory || !activeSceneId) return; const order = activeStory.scenes.map((scene) => scene.scene_id); const index = order.indexOf(activeSceneId); const target = index + direction; if (target < 0 || target >= order.length) return; [order[index], order[target]] = [order[target], order[index]]; try { renderStory(await invoke("story_reorder_scenes", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, sceneIds: order } })); } catch (reason) { setError(String(reason)); } }
+$("#move-scene-earlier").addEventListener("click", () => void moveStoryScene(-1)); $("#move-scene-later").addEventListener("click", () => void moveStoryScene(1));
+async function renderStoryPhase(through) { if (!activeStory) return; try { const accepted = await invoke("render_story", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, through } }); state.activeJob = accepted.job_id; jobStatus.textContent = through === "still" ? "Rendering storyboard…" : "Rendering story motion clips…"; } catch (reason) { setError(String(reason)); } }
+$("#render-storyboard").addEventListener("click", () => void renderStoryPhase("still")); $("#render-story-clips").addEventListener("click", () => void renderStoryPhase("clip"));
+$("#render-story-narration").addEventListener("click", () => void renderStoryPhase("narration"));
 for (const button of document.querySelectorAll(".close-dialog")) button.addEventListener("click", () => button.closest("dialog").close());
 $("#run-recovery").addEventListener("click", async () => { const button = $("#run-recovery"); button.disabled = true; try { const recovered = await invoke("recover"); $("#recovery-preview").textContent = `Recovered ${recovered.partialOutputCount ?? recovered.partial_output_count ?? 0} incomplete output(s). Completed media was not changed.`; } catch (reason) { $("#recovery-preview").textContent = `Recovery could not run: ${String(reason)}`; } finally { button.disabled = false; } });
 generateButton.addEventListener("click", async () => {

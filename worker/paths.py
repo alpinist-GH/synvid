@@ -14,6 +14,7 @@ class AppPaths:
     outputs: Path
     temporary: Path
     logs: Path
+    stories: Path
 
     @classmethod
     def under(cls, application_support: Path) -> "AppPaths":
@@ -25,8 +26,9 @@ class AppPaths:
             outputs=root / "outputs",
             temporary=root / "temporary",
             logs=root / "logs",
+            stories=root / "stories",
         )
 
     def create(self) -> None:
-        for path in (self.root, self.models, self.outputs, self.temporary, self.logs):
+        for path in (self.root, self.models, self.outputs, self.temporary, self.logs, self.stories):
             path.mkdir(parents=True, exist_ok=True)

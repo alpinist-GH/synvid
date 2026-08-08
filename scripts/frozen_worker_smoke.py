@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--app-support", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--status-only", action="store_true")
+    parser.add_argument("--story-planner", action="store_true", help="exercise Draft scenes locally through frozen IPC")
     parser.add_argument("--model", choices=("ltx-video", "flux-schnell"), default="ltx-video")
     args = parser.parse_args()
     environment = {**os.environ, "PATH": "/usr/bin:/bin", "SYNVID_APP_SUPPORT": str(args.app_support)}
@@ -53,6 +54,24 @@ def main() -> int:
             if "ltx-video" not in models or "flux-schnell" not in models:
                 raise RuntimeError(f"bundled worker did not advertise measured providers: {status}")
             print(json.dumps(status, sort_keys=True))
+            return 0
+        if args.story_planner:
+            send(process, "frozen-story-create", "story_create", {
+                "title": "Frozen planner smoke", "premise": "A lone boat reaches shore before a storm.",
+                "style_bible": "cinematic watercolor", "aspect_ratio": "16:9",
+            })
+            story = receive(selector, 20)
+            payload = story.get("payload", {})
+            if story.get("kind") != "status" or not isinstance(payload.get("story_id"), str):
+                raise RuntimeError(f"frozen worker could not create story: {story}")
+            send(process, "frozen-story-draft", "story_draft_scenes", {
+                "story_id": payload["story_id"], "expected_revision": payload["revision"], "count": 3,
+            })
+            drafted = receive(selector, args.timeout)
+            scenes = drafted.get("payload", {}).get("scenes")
+            if drafted.get("kind") != "status" or not isinstance(scenes, list) or len(scenes) != 3:
+                raise RuntimeError(f"frozen planner draft failed: {drafted}")
+            print(json.dumps(drafted, sort_keys=True))
             return 0
         send(process, "frozen-generate", "generate", {"model_id": args.model, "prompt": "A yellow flower gently moving in a spring breeze", "seed": 42, "recipe": "Balanced"})
         accepted = receive(selector, 20)

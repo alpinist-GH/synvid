@@ -16,6 +16,8 @@ from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
 from .narration import KokoroNarrator, NarrationError
+from .stories import StoryError
+from .story_planner import StoryPlannerError
 
 
 WORKER_VERSION = "0.1.0"
@@ -152,6 +154,38 @@ def serve() -> int:
                 if not isinstance(output_id, str) or not isinstance(profile, str):
                     raise ProtocolError("export_video requires an output ID and profile")
                 _reply(request, "status", service.export(output_id, profile))
+            elif request.kind == "story_create":
+                _reply(request, "status", service.create_story(request.payload))
+            elif request.kind == "story_list":
+                _reply(request, "status", {"stories": service.list_stories()})
+            elif request.kind == "story_get":
+                story_id = request.payload.get("story_id")
+                if not isinstance(story_id, str): raise ProtocolError("story_get requires a story ID")
+                _reply(request, "status", service.get_story(story_id))
+            elif request.kind == "story_update":
+                _reply(request, "status", service.update_story(request.payload))
+            elif request.kind == "story_add_scene":
+                _reply(request, "status", service.add_story_scene(request.payload))
+            elif request.kind == "story_update_scene":
+                _reply(request, "status", service.update_story_scene(request.payload))
+            elif request.kind == "story_reorder_scenes":
+                _reply(request, "status", service.reorder_story_scenes(request.payload))
+            elif request.kind == "story_draft_scenes":
+                _reply(request, "status", service.draft_story_scenes(request.payload))
+            elif request.kind == "story_record_artifact":
+                _reply(request, "status", service.record_story_artifact(request.payload))
+            elif request.kind == "render_story":
+                def progress(job):
+                    _reply(request, "progress", service._job_payload(job))
+
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output:
+                        payload.update(output)
+                    _reply(request, "terminal", payload)
+
+                job = service.submit_story_render(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "cancel":
                 job_id = request.payload.get("job_id")
                 if not isinstance(job_id, str):
@@ -166,7 +200,7 @@ def serve() -> int:
                 _reply(request, "error", {"code": "unsupported_request", "message": "request is not available in Stage 0"})
         except BusyError as error:
             _reply(request, "error", {"code": "busy", "message": str(error), "current_job_id": error.current_job_id})
-        except (ProtocolError, GenerationError, NarrationError, KeyError, TypeError) as error:
+        except (ProtocolError, GenerationError, NarrationError, StoryError, StoryPlannerError, KeyError, TypeError) as error:
             # A malformed request cannot be trusted to contain a valid ID.
             _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "invalid_request", "message": str(error)})
     return 0

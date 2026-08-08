@@ -17,7 +17,7 @@ MAX_PAYLOAD_ITEMS = 128
 # This is deliberately a protocol allow-list, not a command dispatcher.  It
 # keeps a malformed or newer webview from smuggling a generic operation into
 # the worker before Stage 1 wires the real operations.
-REQUEST_KINDS = frozenset({"hello", "get_status", "list_outputs", "recovery_preview", "recover", "generate", "edit_video", "edit_image", "narrate", "export_video", "cancel", "unload_model"})
+REQUEST_KINDS = frozenset({"hello", "get_status", "list_outputs", "recovery_preview", "recover", "generate", "edit_video", "edit_image", "narrate", "export_video", "story_create", "story_list", "story_get", "story_update", "story_add_scene", "story_update_scene", "story_reorder_scenes", "story_draft_scenes", "story_record_artifact", "render_story", "cancel", "unload_model"})
 # A generate request is acknowledged immediately.  Its progress and exactly one
 # terminal event use the same request ID, so the Rust supervisor can route a
 # complete job stream without inventing another unbounded channel.

@@ -62,6 +62,35 @@ class GenerationServiceTests(unittest.TestCase):
                 service.submit(self.PAYLOAD, lambda _job: None, lambda _job, _output: None)
             service.cancel(first.job_id)
 
+    def test_storyboard_render_is_one_job_and_checkpoints_each_scene(self):
+        class ImageProfile: width = height = 64; steps = 2; guidance_scale = 0.0
+        class VideoProfile: width = height = 64; frames = 9; fps = 8; steps = 2; guidance_scale = 1.0
+        class Recipes: recipes = {"Balanced": VideoProfile()}
+        class Image(FakeProvider):
+            facts = ProviderFacts("story-image", frozenset({Capability.IMAGE_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_profile(self): return ImageProfile()
+            def run(self, request, progress, cancelled):
+                (request.output_dir / "image.png").write_bytes(b"image"); return {"media_file": "image.png"}
+        class Video(FakeProvider):
+            facts = ProviderFacts("story-video", frozenset({Capability.VIDEO_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_recipes(self): return Recipes()
+            def run(self, request, progress, cancelled):
+                self.sources = getattr(self, "sources", []) + [request.source_image]
+                (request.output_dir / "video.mp4").write_bytes(b"video"); return {"media_file": "video.mp4"}
+        with tempfile.TemporaryDirectory() as temp:
+            image, video = Image(), Video()
+            image.facts = Image.facts; video.facts = Video.facts
+            service = GenerationService(AppPaths.under(Path(temp)), video, Estimate(1, True), additional_providers=(image,), estimates={"story-image": Estimate(1, True)})
+            story = service.create_story({"title": "Storyboard"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+            story = service.update_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": story["scenes"][0]["scene_id"], "approved": True})
+            done = threading.Event(); received = []
+            job = service.submit_story_render({"story_id": story["story_id"], "expected_revision": story["revision"], "through": "clip"}, lambda _job: None, lambda completed, output: (received.append((completed, output)), done.set()))
+            self.assertTrue(done.wait(2)); self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+            rendered = service.get_story(story["story_id"])
+            self.assertIn("still", rendered["scenes"][0]["artifacts"]); self.assertIn("clip", rendered["scenes"][0]["artifacts"])
+            self.assertEqual(len(video.sources), 1); self.assertTrue(video.sources[0].is_file())
+
     def test_image_provider_uses_its_measured_profile_and_persists_png(self):
         class Profile:
             width = 64
