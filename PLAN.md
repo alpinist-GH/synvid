@@ -308,7 +308,7 @@ v1 uses manual signed-DMG updates: installing a newer app must leave Application
   - Freeze the full PyTorch/diffusers worker in one-folder mode and complete real text-to-video and image-to-video runs from a relocated local `.app`, not only from source or `venv`.
   - Compare development-worker and frozen-worker outputs, peak memory, first-job latency, second-job latency, model reuse, cancellation, and shutdown. Packaging is rejected if it materially breaks correctness or adds unexplained generation overhead.
   - Kill the worker during loading and generation; verify Rust reports interruption, cleans partial state, drains stderr, restarts safely, and never leaves an orphan worker after app quit.
-- [ ] **Stage 3 — additional generation models, one gate at a time**
+- [x] **Stage 3 — additional generation models, one gate at a time**
   - Add `FLUX.1-schnell` after explicit access/download confirmation; validate text-to-image on MPS.
   - Implement gated-model authentication through the selected macOS-protected credential store; verify tokens never enter argv, IPC responses, logs, output metadata, crash reports, or the webview.
   - Add Wan2.1-1.3B and validate text-to-video.

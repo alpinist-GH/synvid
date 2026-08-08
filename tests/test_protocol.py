@@ -25,6 +25,10 @@ class ProtocolTests(unittest.TestCase):
         request = parse_envelope('{"version":1,"request_id":"r","kind":"generate","payload":{}}')
         validate_request(request)
 
+    def test_accepts_non_destructive_recovery_preview(self):
+        request = parse_envelope('{"version":1,"request_id":"r","kind":"recovery_preview","payload":{}}')
+        validate_request(request)
+
     def test_rejects_unbounded_payload(self):
         payload = "{" * 9 + '"value"' + "}" * 9
         with self.assertRaises(ProtocolError):

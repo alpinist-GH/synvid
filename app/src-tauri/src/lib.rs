@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
+pub mod credentials;
 mod worker;
 use worker::{SupervisorState, WorkerSupervisor};
 
@@ -16,6 +17,7 @@ struct WorkerStatus {
     protocol_version: Option<u8>,
     active_job: Option<Value>,
     measured_recipes: Option<Value>,
+    available_models: Option<Value>,
     events: Vec<Value>,
     error: Option<String>,
 }
@@ -23,6 +25,7 @@ struct WorkerStatus {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateRequest {
+    model_id: String,
     prompt: String,
     seed: i64,
     recipe: String,
@@ -44,14 +47,26 @@ fn response_payload(reply: Value) -> Result<Value, String> {
     }
 }
 
+/// Reports only whether a gated-model credential is available.  The token
+/// itself remains in macOS Keychain and is never serialised into Tauri IPC.
+#[tauri::command]
+fn hugging_face_credential_status() -> Value {
+    json!({"available": credentials::hugging_face_token().is_ok()})
+}
+
 /// This intentionally exposes no process, filesystem, or shell command to the webview.
 #[tauri::command]
 fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> WorkerStatus {
     let mut supervisor = supervisor.lock().expect("worker supervisor lock poisoned");
     if let Err(error) = supervisor.restart_if_interrupted() {
         return WorkerStatus {
-            connected: false, protocol_version: None, active_job: None, measured_recipes: None,
-            events: supervisor.take_pending_events(), error: Some(error),
+            connected: false,
+            protocol_version: None,
+            active_job: None,
+            measured_recipes: None,
+            available_models: None,
+            events: supervisor.take_pending_events(),
+            error: Some(error),
         };
     }
     let protocol_version = match supervisor.state() {
@@ -62,6 +77,7 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
                 protocol_version: None,
                 active_job: None,
                 measured_recipes: None,
+                available_models: None,
                 events: vec![],
                 error: Some("Worker unavailable".into()),
             };
@@ -79,6 +95,7 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
                 .get("measured_recipes")
                 .cloned()
                 .filter(|value| !value.is_null()),
+            available_models: payload.get("available_models").cloned(),
             events: supervisor.take_pending_events(),
             error: None,
         },
@@ -87,6 +104,7 @@ fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Worke
             protocol_version: None,
             active_job: None,
             measured_recipes: None,
+            available_models: None,
             events: supervisor.take_pending_events(),
             error: Some(error),
         },
@@ -104,8 +122,12 @@ fn generate(
     if !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High") {
         return Err("Generation recipe is not available.".into());
     }
+    if !matches!(request.model_id.as_str(), "ltx-video" | "flux-schnell") {
+        return Err("Selected model is not available.".into());
+    }
     let payload = json!({
         "prompt": request.prompt,
+        "model_id": request.model_id,
         "seed": request.seed,
         "recipe": request.recipe,
         "source_image_id": request.source_image_id,
@@ -137,14 +159,32 @@ fn cancel(
 #[tauri::command]
 fn list_outputs(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
     response_payload(
-        supervisor.lock().expect("worker supervisor lock poisoned").request("list_outputs", json!({}))?,
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("list_outputs", json!({}))?,
+    )
+}
+
+#[tauri::command]
+fn recovery_preview(
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("recovery_preview", json!({}))?,
     )
 }
 
 #[tauri::command]
 fn recover(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
     response_payload(
-        supervisor.lock().expect("worker supervisor lock poisoned").request("recover", json!({}))?,
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("recover", json!({}))?,
     )
 }
 
@@ -154,27 +194,42 @@ fn export_video(
     profile: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if output_id.is_empty() || output_id.len() > 128 || !matches!(profile.as_str(), "high" | "balanced" | "small") {
+    if output_id.is_empty()
+        || output_id.len() > 128
+        || !matches!(profile.as_str(), "high" | "balanced" | "small")
+    {
         return Err("Invalid export request.".into());
     }
     response_payload(
-        supervisor.lock().expect("worker supervisor lock poisoned").request(
-            "export_video", json!({"output_id": output_id, "profile": profile}),
-        )?,
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "export_video",
+                json!({"output_id": output_id, "profile": profile}),
+            )?,
     )
 }
 
 fn is_supported_image(path: &std::path::Path) -> Result<bool, String> {
     let metadata = fs::symlink_metadata(path).map_err(|_| "The selected image is unavailable.")?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 || metadata.len() > 64 * 1024 * 1024 {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 64 * 1024 * 1024
+    {
         return Ok(false);
     }
     let mut header = [0_u8; 12];
     let mut file = fs::File::open(path).map_err(|_| "The selected image is unavailable.")?;
-    let count = file.read(&mut header).map_err(|_| "The selected image could not be read.")?;
-    Ok((count >= 8 && header[..8] == [137, 80, 78, 71, 13, 10, 26, 10])
-        || (count >= 3 && header[..3] == [255, 216, 255])
-        || (count >= 12 && header[..4] == *b"RIFF" && header[8..12] == *b"WEBP"))
+    let count = file
+        .read(&mut header)
+        .map_err(|_| "The selected image could not be read.")?;
+    Ok(
+        (count >= 8 && header[..8] == [137, 80, 78, 71, 13, 10, 26, 10])
+            || (count >= 3 && header[..3] == [255, 216, 255])
+            || (count >= 12 && header[..4] == *b"RIFF" && header[8..12] == *b"WEBP"),
+    )
 }
 
 /// Opens the native picker in Rust, verifies a regular image, and copies it
@@ -183,13 +238,22 @@ fn is_supported_image(path: &std::path::Path) -> Result<bool, String> {
 fn choose_source_image(app: tauri::AppHandle) -> Result<Value, String> {
     let Some(source) = rfd::FileDialog::new()
         .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
-        .pick_file() else { return Ok(json!({"sourceImageId": null})); };
+        .pick_file()
+    else {
+        return Ok(json!({"sourceImageId": null}));
+    };
     if !is_supported_image(&source)? {
         return Err("Choose a PNG, JPEG, or WebP image smaller than 64 MB.".into());
     }
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "System clock is unavailable.")?.as_nanos();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable.")?
+        .as_nanos();
     let id = format!("image-{nonce:x}");
-    let imports = app.path().home_dir().map_err(|_| "Home directory is unavailable.")?
+    let imports = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
         .join("Library/Application Support/SynVid/temporary/imports");
     fs::create_dir_all(&imports).map_err(|_| "Could not prepare secure image storage.")?;
     let destination = imports.join(&id);
@@ -215,7 +279,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![worker_status, list_outputs, recover, generate, export_video, choose_source_image, cancel])
+        .invoke_handler(tauri::generate_handler![
+            hugging_face_credential_status,
+            worker_status,
+            list_outputs,
+            recovery_preview,
+            recover,
+            generate,
+            export_video,
+            choose_source_image,
+            cancel
+        ])
         .run(tauri::generate_context!())
         .expect("error while running SynVid");
 }

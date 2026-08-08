@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "Local AI image and video generator"
 edition = "2024"
 rust-version = "1.97"
+autobins = false
+default-run = "synvid"
+
+[[bin]]
+name = "synvid"
+path = "src/main.rs"
+
+[[example]]
+name = "synvid-keychain"
+path = "tools/synvid-keychain.rs"
 
 [lib]
 name = "synvid_lib"
@@ -18,3 +28,4 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 thiserror = "2"
 rfd = "0.16"
+security-framework = "3"

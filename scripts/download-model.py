@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility wrapper for the generic reviewed model installer."""
+"""Explicit installation of one reviewed model from the SynVid registry."""
 
 from __future__ import annotations
 
@@ -8,27 +8,31 @@ import json
 from pathlib import Path
 import sys
 
-# Scripts run from this directory, while worker is a sibling of scripts.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from huggingface_hub import HfApi, snapshot_download
 
 from worker.model_install import RemoteFile, install_snapshot
 from worker.models import REGISTRY
 from worker.paths import AppPaths
-from huggingface_hub import HfApi, snapshot_download
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-support", type=Path, required=True)
+    parser.add_argument("--model", choices=sorted(REGISTRY), required=True)
     parser.add_argument("--confirm", action="store_true", help="confirm the displayed model/license/download facts")
     args = parser.parse_args()
-    spec = REGISTRY["ltx-video"]
+    spec = REGISTRY[args.model]
+    facts = {
+        "repository": spec.repository,
+        "revision": spec.revision,
+        "expected_size_gib": spec.expected_size_gib,
+        "license": spec.license_name,
+        "requires_access_confirmation": spec.requires_access_confirmation,
+    }
     if not args.confirm:
-        print(json.dumps({
-            "repository": spec.repository, "revision": spec.revision,
-            "expected_size_gib": spec.expected_size_gib, "license": spec.license_name,
-            "requires_access_confirmation": spec.requires_access_confirmation,
-        }, sort_keys=True), file=sys.stderr)
+        print(json.dumps(facts, sort_keys=True), file=sys.stderr)
         print("refusing download without --confirm", file=sys.stderr)
         return 2
 
@@ -46,7 +50,8 @@ def main() -> int:
             allow_patterns=list(spec.allowed_files),
         )
 
-    print(json.dumps(install_snapshot(AppPaths.under(args.app_support), spec, files, download), sort_keys=True))
+    result = install_snapshot(AppPaths.under(args.app_support), spec, files, download)
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 

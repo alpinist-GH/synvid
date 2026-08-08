@@ -163,9 +163,13 @@ class LtxProvider:
 
     def unload(self) -> None:
         self._pipeline = None
+        import gc
+
+        gc.collect()
         try:
             import torch
             if torch.backends.mps.is_available():
+                torch.mps.synchronize()
                 torch.mps.empty_cache()
-        except ImportError:
+        except (ImportError, RuntimeError):
             pass

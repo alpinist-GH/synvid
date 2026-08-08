@@ -71,12 +71,17 @@ impl WorkerSupervisor {
             .stdout
             .take()
             .ok_or("bundled worker stdout was unavailable")?;
-        let stderr = child.stderr.take().ok_or("bundled worker stderr was unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("bundled worker stderr was unavailable")?;
         let stderr_lines = Arc::clone(&self.stderr_lines);
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 let mut lines = stderr_lines.lock().expect("worker stderr lock poisoned");
-                if lines.len() == 128 { lines.remove(0); }
+                if lines.len() == 128 {
+                    lines.remove(0);
+                }
                 lines.push(line);
             }
         });
@@ -172,10 +177,16 @@ impl WorkerSupervisor {
     }
 
     pub fn restart_if_interrupted(&mut self) -> Result<(), String> {
-        if !matches!(self.state, SupervisorState::Interrupted | SupervisorState::Stopped) {
+        if !matches!(
+            self.state,
+            SupervisorState::Interrupted | SupervisorState::Stopped
+        ) {
             return Ok(());
         }
-        let executable = self.executable.clone().ok_or("bundled worker location is unavailable")?;
+        let executable = self
+            .executable
+            .clone()
+            .ok_or("bundled worker location is unavailable")?;
         self.start(&executable)
     }
 
@@ -210,7 +221,7 @@ impl Drop for WorkerSupervisor {
 
 #[cfg(test)]
 mod tests {
-    use super::{hello_version, SupervisorState, WorkerSupervisor};
+    use super::{SupervisorState, WorkerSupervisor, hello_version};
     use serde_json::json;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -232,7 +243,10 @@ mod tests {
 
     #[test]
     fn worker_exit_is_interrupted_and_restarts_from_the_fixed_path() {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let script = std::env::temp_dir().join(format!("synvid-worker-crash-{nonce}.sh"));
         fs::write(
             &script,
@@ -247,7 +261,12 @@ mod tests {
         assert_eq!(supervisor.state(), SupervisorState::Interrupted);
 
         supervisor.restart_if_interrupted().unwrap();
-        assert!(matches!(supervisor.state(), SupervisorState::Ready { protocol_version: 1 }));
+        assert!(matches!(
+            supervisor.state(),
+            SupervisorState::Ready {
+                protocol_version: 1
+            }
+        ));
         supervisor.shutdown();
         fs::remove_file(script).unwrap();
     }

@@ -10,6 +10,7 @@ import threading
 from .protocol import Envelope, ProtocolError, negotiate_version, parse_envelope, validate_request
 from .paths import AppPaths
 from .providers.ltx import LtxProvider
+from .providers.flux import FluxSchnellProvider
 from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
@@ -35,8 +36,26 @@ def _app_paths() -> AppPaths:
 
 def _service() -> GenerationService:
     paths = _app_paths()
-    model_root = paths.models / "ltx-video" / "snapshot"
-    profile = paths.models / "ltx-video" / "measured-profile.json"
+    ltx = LtxProvider(
+        paths.models / "ltx-video" / "snapshot",
+        paths.models / "ltx-video" / "measured-profile.json",
+    )
+    flux = FluxSchnellProvider(
+        paths.models / "flux-schnell" / "snapshot",
+        paths.models / "flux-schnell" / "measured-profile.json",
+    )
+    estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
+    flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
+    return GenerationService(
+        paths,
+        ltx,
+        estimate,
+        additional_providers=(flux,),
+        estimates={"flux-schnell": flux_estimate},
+    )
+
+
+def _measured_estimate(profile: Path) -> Estimate:
     try:
         import json
         measured = json.loads(profile.read_text())
@@ -48,7 +67,7 @@ def _service() -> GenerationService:
         estimate = Estimate(None, False)
     # This estimate remains deliberately unavailable until smoke_test writes a
     # real measurement.  Generation is rejected rather than guessing disk use.
-    return GenerationService(paths, LtxProvider(model_root, profile), estimate)
+    return estimate
 
 
 def serve() -> int:
@@ -67,6 +86,8 @@ def serve() -> int:
                 _reply(request, "status", service.status_payload())
             elif request.kind == "list_outputs":
                 _reply(request, "status", {"outputs": service.library_payload()})
+            elif request.kind == "recovery_preview":
+                _reply(request, "status", service.recovery_preview())
             elif request.kind == "recover":
                 _reply(request, "status", service.recover())
             elif request.kind == "generate":

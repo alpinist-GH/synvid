@@ -45,8 +45,10 @@ _DIFFUSERS_FILES = (
     "model_index.json", "scheduler/*.json", "text_encoder/*.json",
     "text_encoder/*.safetensors", "text_encoder_2/*.json",
     "text_encoder_2/*.safetensors", "tokenizer/*.json", "tokenizer/*.txt",
-    "tokenizer/*.model", "tokenizer_2/*.json", "tokenizer_2/*.txt",
-    "tokenizer_2/*.model", "transformer/*.json", "transformer/*.safetensors",
+    "tokenizer/*.model", "tokenizer/merges.txt", "tokenizer/vocab.json",
+    "tokenizer_2/*.json", "tokenizer_2/*.txt", "tokenizer_2/*.model",
+    "tokenizer_2/merges.txt", "tokenizer_2/vocab.json",
+    "transformer/*.json", "transformer/*.safetensors",
     "vae/*.json", "vae/*.safetensors", "ae.safetensors",
 )
 

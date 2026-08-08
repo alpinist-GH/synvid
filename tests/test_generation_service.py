@@ -8,6 +8,7 @@ from pathlib import Path
 from worker.jobs import BusyError, JobState
 from worker.paths import AppPaths
 from worker.providers.fake import FakeProvider
+from worker.providers.base import Capability, ProviderFacts
 from worker.resources import Estimate
 from worker.service import GenerationService
 
@@ -60,3 +61,83 @@ class GenerationServiceTests(unittest.TestCase):
             with self.assertRaises(BusyError):
                 service.submit(self.PAYLOAD, lambda _job: None, lambda _job, _output: None)
             service.cancel(first.job_id)
+
+    def test_image_provider_uses_its_measured_profile_and_persists_png(self):
+        class Profile:
+            width = 64
+            height = 64
+            steps = 4
+            guidance_scale = 0.0
+
+        class FakeImageProvider(FakeProvider):
+            def measured_profile(self):
+                return Profile()
+
+            def run(self, request, progress, cancelled):
+                self.assert_request = request
+                (request.output_dir / "image.png").write_bytes(b"fixture image")
+                return {"media_file": "image.png", "media_type": "image/png"}
+
+        with tempfile.TemporaryDirectory() as temp:
+            provider = FakeImageProvider()
+            provider.facts = ProviderFacts(
+                provider_id="fake-image",
+                capabilities=frozenset({Capability.IMAGE_GENERATION}),
+                profile="shareable",
+                revision="fixture-image-v1",
+                license_name="test-only",
+                requires_access_confirmation=False,
+            )
+            service = self._service(temp, provider)
+            terminal = threading.Event()
+            received = []
+            job = service.submit(
+                {"prompt": "fixture image", "seed": 7},
+                lambda _job: None,
+                lambda completed, output: (received.append((completed, output)), terminal.set()),
+            )
+            self.assertTrue(terminal.wait(2))
+            self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+            self.assertEqual(provider.assert_request.capability, Capability.IMAGE_GENERATION)
+            self.assertEqual(provider.assert_request.width, 64)
+            output_id = received[0][1]["output_id"]
+            self.assertTrue((service.paths.outputs / output_id / "image.png").is_file())
+            self.assertEqual(service.status_payload()["measured_image_profile"]["steps"], 4)
+
+    def test_routes_to_explicitly_selected_measured_provider(self):
+        class Profile:
+            width = 64
+            height = 64
+            steps = 4
+            guidance_scale = 0.0
+
+        class SelectedImageProvider(FakeProvider):
+            def measured_profile(self):
+                return Profile()
+
+            def run(self, request, progress, cancelled):
+                self.request = request
+                (request.output_dir / "image.png").write_bytes(b"fixture image")
+                return {"media_file": "image.png", "media_type": "image/png"}
+
+        with tempfile.TemporaryDirectory() as temp:
+            image = SelectedImageProvider()
+            image.facts = ProviderFacts(
+                provider_id="selected-image", capabilities=frozenset({Capability.IMAGE_GENERATION}),
+                profile="shareable", revision="fixture-image-v1", license_name="test-only",
+                requires_access_confirmation=False,
+            )
+            service = GenerationService(
+                AppPaths.under(Path(temp)), FakeProvider(), Estimate(1, True),
+                additional_providers=(image,), estimates={"selected-image": Estimate(1, True)},
+            )
+            terminal = threading.Event()
+            service.submit(
+                {"model_id": "selected-image", "prompt": "fixture image", "seed": 7},
+                lambda _job: None, lambda _job, _output: terminal.set(),
+            )
+            self.assertTrue(terminal.wait(2))
+            self.assertEqual(image.request.capability, Capability.IMAGE_GENERATION)
+            self.assertEqual(service.status_payload()["available_models"]["selected-image"]["measured_image_profile"]["steps"], 4)
+            with self.assertRaisesRegex(Exception, "selected model is not available"):
+                service.submit({"model_id": "wan2.1-14b", "prompt": "no", "seed": 1}, lambda _job: None, lambda _job, _output: None)

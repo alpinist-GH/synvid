@@ -36,18 +36,32 @@ def _required(payload: dict, name: str, typ: type):
 class GenerationService:
     """Owns all app roots; requests can never choose arbitrary paths."""
 
-    def __init__(self, paths: AppPaths, provider: Provider, estimate: Estimate):
+    def __init__(
+        self,
+        paths: AppPaths,
+        provider: Provider,
+        estimate: Estimate,
+        *,
+        additional_providers: tuple[Provider, ...] = (),
+        estimates: dict[str, Estimate] | None = None,
+    ):
         self.paths = paths
         self.paths.create()
         self.provider = provider
         self.estimate = estimate
+        self._providers = {provider.facts.provider_id: provider}
+        self._providers.update({item.facts.provider_id: item for item in additional_providers})
+        self._estimates = {provider.facts.provider_id: estimate}
+        if estimates:
+            self._estimates.update(estimates)
         self.jobs = JobController()
         self.reservations = ReservationBook(paths.root)
         self.store = Store(paths.database)
         self._job_outputs: dict[str, str] = {}
 
     def submit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
-        request_values = self._parse_request(payload)
+        provider = self._provider_for(payload)
+        request_values = self._parse_request(payload, provider)
         output_paths: OutputPaths | None = None
         job_ready = __import__("threading").Event()
         job: Job | None = None
@@ -57,17 +71,17 @@ class GenerationService:
             job_ready.wait()
             assert job is not None
             try:
-                with self.reservations.hold(self.estimate):
+                with self.reservations.hold(self._estimates[provider.facts.provider_id]):
                     output_paths = allocate(self.paths.outputs)
                     request = OperationRequest(operation_id=output_paths.output_id, output_dir=output_paths.partial_dir, **request_values)
-                    result = self.provider.run(request, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
+                    result = provider.run(request, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
                     media_file = result.get("media_file")
                     if not isinstance(media_file, str):
                         raise GenerationError("provider did not identify a media file")
                     media_path = resolve_owned_file(self.paths.outputs / ".partial", output_paths.output_id, media_file)
                     if not media_path.is_file():
                         raise GenerationError("provider did not produce the declared media file")
-                    self._write_metadata(output_paths, request_values, result)
+                    self._write_metadata(output_paths, request_values, result, provider)
                     final_dir = promote(output_paths)
                     self._index_output(final_dir / "metadata.json")
                     self._job_outputs[job.job_id] = output_paths.output_id
@@ -83,15 +97,25 @@ class GenerationService:
         self._watch_terminal(job, on_terminal)
         return job
 
-    def _parse_request(self, payload: dict) -> dict:
+    def _provider_for(self, payload: dict) -> Provider:
+        model_id = payload.get("model_id", self.provider.facts.provider_id)
+        if not isinstance(model_id, str) or model_id not in self._providers:
+            raise GenerationError("selected model is not available")
+        if model_id not in self._estimates:
+            raise GenerationError("selected model has no measured disk estimate")
+        return self._providers[model_id]
+
+    def _parse_request(self, payload: dict, provider: Provider) -> dict:
         prompt = _required(payload, "prompt", str).strip()
         if not prompt or len(prompt) > 4_000:
             raise GenerationError("prompt must contain 1 to 4000 characters")
+        if provider.facts.capabilities == frozenset({Capability.IMAGE_GENERATION}):
+            return self._parse_image_request(payload, prompt, provider)
         recipe = payload.get("recipe", "Balanced")
         if recipe not in {"Draft", "Balanced", "High"}:
             raise GenerationError("recipe is not available")
         try:
-            profile = self.provider.measured_recipes().recipes[recipe]
+            profile = provider.measured_recipes().recipes[recipe]
         except AttributeError:
             profile = None
         except (KeyError, ValueError, OSError, RuntimeError) as error:
@@ -120,6 +144,26 @@ class GenerationService:
             raise GenerationError("generation dimensions, frames, FPS, and steps must be positive")
         return values
 
+    def _parse_image_request(self, payload: dict, prompt: str, provider: Provider) -> dict:
+        if payload.get("source_image_id") is not None:
+            raise GenerationError("the selected image provider does not support source images")
+        try:
+            profile = provider.measured_profile()
+        except (AttributeError, ValueError, OSError, RuntimeError) as error:
+            raise GenerationError("selected image generation settings are not measured") from error
+        return {
+            "capability": Capability.IMAGE_GENERATION,
+            "prompt": prompt,
+            "seed": _required(payload, "seed", int),
+            "width": profile.width,
+            "height": profile.height,
+            "frames": 1,
+            "fps": 1,
+            "steps": profile.steps,
+            "guidance_scale": profile.guidance_scale,
+            "recipe": "Measured",
+        }
+
     def _on_progress(self, job: Job, fraction: float, text: str, callback: Callable[[Job], None]) -> None:
         self.jobs._progress(job, fraction, text)
         callback(self.jobs.status(job.job_id))
@@ -139,7 +183,7 @@ class GenerationService:
                 time.sleep(0.01)
         threading.Thread(target=watch, daemon=True).start()
 
-    def _write_metadata(self, paths: OutputPaths, request: dict, result: dict[str, str]) -> None:
+    def _write_metadata(self, paths: OutputPaths, request: dict, result: dict[str, str], provider: Provider) -> None:
         metadata_request = {
             key: (value.value if isinstance(value, Capability) else value.name if isinstance(value, Path) else value)
             for key, value in request.items()
@@ -148,8 +192,8 @@ class GenerationService:
             "schema_version": 1,
             "output_id": paths.output_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "provider": self.provider.facts.provider_id,
-            "provider_revision": self.provider.facts.revision,
+            "provider": provider.facts.provider_id,
+            "provider_revision": provider.facts.revision,
             "request": metadata_request,
             "result": result,
             "lineage": [],
@@ -168,9 +212,27 @@ class GenerationService:
 
     def status_payload(self) -> dict:
         current = self.jobs.current()
+        profiles, image_profile = self._measured_profiles(self.provider)
+        available_models = {}
+        for model_id, provider in self._providers.items():
+            recipes, image = self._measured_profiles(provider)
+            available_models[model_id] = {
+                "capabilities": [capability.value for capability in provider.facts.capabilities],
+                "measured_recipes": recipes,
+                "measured_image_profile": image,
+            }
+        return {
+            "active_job": self._job_payload(current) if current else None,
+            "measured_recipes": profiles,
+            "measured_image_profile": image_profile,
+            "available_models": available_models,
+        }
+
+    @staticmethod
+    def _measured_profiles(provider: Provider) -> tuple[dict | None, dict | None]:
         profiles = None
         try:
-            measured = self.provider.measured_recipes().recipes
+            measured = provider.measured_recipes().recipes
             profiles = {
                 name: {
                     "width": profile.width, "height": profile.height,
@@ -183,10 +245,18 @@ class GenerationService:
             # A missing profile is intentionally surfaced as unavailable rather
             # than guessed by the UI.
             pass
-        return {
-            "active_job": self._job_payload(current) if current else None,
-            "measured_recipes": profiles,
-        }
+        image_profile = None
+        try:
+            profile = provider.measured_profile()
+            image_profile = {
+                "width": profile.width,
+                "height": profile.height,
+                "steps": profile.steps,
+                "guidance_scale": profile.guidance_scale,
+            }
+        except (AttributeError, ValueError, OSError, RuntimeError):
+            pass
+        return profiles, image_profile
 
     def export(self, output_id: str, profile: str) -> dict:
         if profile not in {"high", "balanced", "small"}:
