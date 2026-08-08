@@ -24,11 +24,22 @@ with `numpy.load(..., allow_pickle=False)`, then atomically promoted the
 snapshot. The raw Hugging Face asset from the first attempt is retained outside
 the active snapshot as an incompatible backup, not used at runtime.
 
-## Remaining gates
+## Real synthesis and mux gate
 
-Smoke synthesis must produce a valid WAV before any narration output is
-claimed. The worker therefore unloads every diffusion provider before starting
-Kokoro and unloads Kokoro after each job; it does not claim that both fit
-together. Remaining manual acceptance is to listen to the result and measure
-a future concurrent-residency policy before changing that behavior. Use
-`ffprobe` to verify replacement, padding, exports, and A/V sync.
+On 2026-08-08, using the active Application Support snapshot and the bundled
+`imageio-ffmpeg` binary, `af_bella` synthesized `Hi.` to a 0.597333-second
+WAV. SynVid padded it to a 1.125-second, 256x256, 8-FPS source clip, then
+replaced the video audio. `ffprobe` reported H.264 video and AAC audio, both
+exactly 1.125 seconds. An overlong control (`Hello from SynVid.`) synthesized
+to 1.19 seconds and was correctly rejected for that same 1.125-second video.
+
+The worker unloads every diffusion provider before starting Kokoro and unloads
+Kokoro after each job. This is the selected no-co-residency policy; it avoids
+claiming that TTS and a diffusion model fit together without an additional
+concurrent-memory experiment.
+
+## Remaining manual acceptance
+
+Listen to a narration created from the installed-app Add Voice flow. Recheck
+export profiles and any future interpolated-FPS output with `ffprobe` and
+playback to confirm A/V sync before marking Stage 5 complete.
