@@ -43,6 +43,13 @@ struct EditVideoRequest {
     change_amount: f64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NarrateRequest {
+    source_output_id: String,
+    text: String,
+}
+
 fn response_payload(reply: Value) -> Result<Value, String> {
     match reply.get("kind").and_then(Value::as_str) {
         Some("error") => Err(reply
@@ -174,6 +181,30 @@ fn edit_video(
                 json!({"model_id": request.model_id, "source_output_id": request.source_output_id,
             "prompt": request.prompt, "seed": request.seed, "recipe": request.recipe,
             "change_amount": request.change_amount}),
+            )?,
+    )
+}
+
+#[tauri::command]
+fn narrate(
+    request: NarrateRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if request.source_output_id.len() != 36
+        || request.text.trim().is_empty()
+        || request.text.len() > 4_000
+    {
+        return Err(
+            "Narration text must contain 1 to 4000 characters for a selected video.".into(),
+        );
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "narrate",
+                json!({"source_output_id": request.source_output_id, "text": request.text}),
             )?,
     )
 }
@@ -325,6 +356,7 @@ pub fn run() {
             recover,
             generate,
             edit_video,
+            narrate,
             export_video,
             choose_source_image,
             cancel

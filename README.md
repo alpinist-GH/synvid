@@ -9,6 +9,18 @@ The project has passed the narrow Stage 1 LTX feasibility recipe recorded
 below and is implementing the broader Stage 2 app gate in [PLAN.md](PLAN.md).
 The app exposes no unmeasured generation settings.
 
+## Narration
+
+Stage 5's implementation introduces an explicit local narration descendant:
+**Add Voice** synthesizes English text with Kokoro and replaces the
+selected video's audio without altering the source. The video timeline is
+authoritative: short speech is padded with silence, while an overlong script
+is rejected rather than time-stretched or silently cut off. Kokoro uses a stock
+voice; it does not clone a person. Its ONNX runtime avoids the incompatible
+Chatterbox dependency stack. Its model must be explicitly installed
+into SynVid's own Application Support model root; SynVid never searches or
+reuses another application's cache.
+
 SynVid keeps its mutable data below `~/Library/Application Support/SynVid/`:
 `models/`, `outputs/`, `temporary/`, `logs/`, and `index.sqlite3`. Replacing or
 removing an app bundle never removes this data. Output and model deletion will

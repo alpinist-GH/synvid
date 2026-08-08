@@ -50,6 +50,7 @@
           <p id="result-message">No completed output in this window yet.</p>
           <div id="export-controls" class="export-controls" hidden>
             <button id="edit-video" type="button">Edit video</button>
+            <button id="add-voice" type="button">Add Voice</button>
             <button type="button" data-export="high">Export High</button>
             <button type="button" data-export="balanced">Export Balanced</button>
             <button type="button" data-export="small">Export Small File</button>
@@ -61,6 +62,13 @@
             <label for="change-amount">Change amount <output id="change-amount-value">0.35</output></label>
             <input id="change-amount" type="range" min="0.05" max="0.95" step="0.05" value="0.35" />
             <button id="apply-video-edit" type="button">Apply edit</button>
+          </section>
+          <section id="voice-controls" class="export-controls" hidden aria-labelledby="voice-title">
+            <h4 id="voice-title">Add narration</h4>
+            <label for="narration-text">Narration script</label>
+            <textarea id="narration-text" maxlength="4000" placeholder="Describe what the audience should hear"></textarea>
+            <p class="field-help">Narration replaces the selected video’s audio. Shorter speech is padded; overlong speech is rejected. Kokoro uses the bundled stock voice.</p>
+            <button id="generate-voice" type="button">Generate Voice</button>
           </section>
         </section>
       </section>

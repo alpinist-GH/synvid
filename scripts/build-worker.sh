@@ -18,11 +18,13 @@ PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
     --copy-metadata accelerate \
     --copy-metadata diffusers \
     --copy-metadata huggingface_hub \
+    --copy-metadata kokoro-onnx \
     --copy-metadata requests \
     --copy-metadata safetensors \
     --copy-metadata transformers \
     --collect-all imageio \
     --collect-all imageio_ffmpeg \
+    --collect-all kokoro_onnx \
     --collect-all requests \
     "$root_dir/packaging/worker_launcher.py"
 

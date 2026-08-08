@@ -12,6 +12,7 @@ import re
 from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
+from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio
 from .outputs import OutputPaths, allocate, promote, resolve_owned_file
 from .paths import AppPaths
 from .providers.base import Capability, OperationRequest, Provider
@@ -45,6 +46,7 @@ class GenerationService:
         *,
         additional_providers: tuple[Provider, ...] = (),
         estimates: dict[str, Estimate] | None = None,
+        narrator: Narrator | None = None,
     ):
         self.paths = paths
         self.paths.create()
@@ -59,6 +61,7 @@ class GenerationService:
         self.reservations = ReservationBook(paths.root)
         self.store = Store(paths.database)
         self._job_outputs: dict[str, str] = {}
+        self.narrator = narrator
 
     def submit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         provider = self._provider_for(payload)
@@ -72,6 +75,74 @@ class GenerationService:
             raise GenerationError("selected model does not support video editing")
         request_values = self._parse_video_edit_request(payload, provider)
         return self._submit(provider, request_values, on_progress, on_terminal)
+
+    def submit_narration(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        if self.narrator is None:
+            raise GenerationError("narration is not available")
+        text = _required(payload, "text", str).strip()
+        if not text or len(text) > 4_000:
+            raise GenerationError("narration text must contain 1 to 4000 characters")
+        source_output_id = _required(payload, "source_output_id", str)
+        if not _OUTPUT_ID.fullmatch(source_output_id):
+            raise GenerationError("source output is invalid")
+        source = self.paths.outputs / source_output_id / "video.mp4"
+        metadata_path = self.paths.outputs / source_output_id / "metadata.json"
+        if not source.is_file() or not metadata_path.is_file():
+            raise GenerationError("source video is unavailable")
+        try:
+            source_metadata = json.loads(metadata_path.read_text())
+            request = source_metadata["request"]
+            if request.get("capability") not in {Capability.VIDEO_GENERATION.value, Capability.VIDEO_EDITING.value, Capability.NARRATION.value}:
+                raise ValueError()
+            frames, fps = request["frames"], request["fps"]
+            if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (frames, fps)):
+                raise ValueError()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise GenerationError("source video metadata is invalid") from error
+        return self._submit_narration(source_output_id, source, text, frames / fps, request, on_progress, on_terminal)
+
+    def _submit_narration(self, source_output_id: str, source: Path, text: str, video_duration: float, source_request: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        output_paths: OutputPaths | None = None
+        job_ready = __import__("threading").Event()
+        job: Job | None = None
+        narrator = self.narrator
+        assert narrator is not None
+
+        def runner(progress, cancelled) -> None:
+            nonlocal output_paths
+            job_ready.wait(); assert job is not None
+            try:
+                # Diffusion models are substantially larger than the narrator.
+                # Do not co-reside without a measured combined-memory budget.
+                for provider in self._providers.values():
+                    provider.unload()
+                output_paths = allocate(self.paths.outputs)
+                wav = output_paths.partial_dir / "narration.wav"
+                self._on_progress(job, 0.05, "Synthesizing narration", on_progress)
+                narrator.synthesize(text, wav, cancelled)
+                if cancelled(): raise InterruptedError("narration cancelled")
+                facts = pad_or_reject_wav(wav, video_duration)
+                self._on_progress(job, 0.75, "Replacing audio track", on_progress)
+                replace_audio(source, wav, output_paths.partial_dir / "video.mp4", video_duration)
+                wav.unlink(missing_ok=True)
+                request = {"capability": Capability.NARRATION, "text": text, "source_output_id": source_output_id,
+                           "width": source_request["width"], "height": source_request["height"],
+                           "frames": source_request["frames"], "fps": source_request["fps"],
+                           "seed": 0, "steps": 0, "guidance_scale": 0.0, "recipe": "Narration"}
+                self._write_metadata(output_paths, request, {"media_file": "video.mp4", "media_type": "video/mp4", **facts}, None)
+                final_dir = promote(output_paths); self._index_output(final_dir / "metadata.json")
+                self._job_outputs[job.job_id] = output_paths.output_id
+                self._on_progress(job, 1.0, "Narration saved", on_progress)
+            except BaseException:
+                if output_paths is not None and output_paths.partial_dir.exists(): shutil.rmtree(output_paths.partial_dir)
+                raise
+            finally:
+                # The real memory policy is recorded only after the Stage 5
+                # measurement. Until then do not assume TTS can co-reside.
+                narrator.unload()
+
+        job = self.jobs.submit(runner); job_ready.set(); self._watch_terminal(job, on_terminal)
+        return job
 
     def _submit(self, provider: Provider, request_values: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         output_paths: OutputPaths | None = None
@@ -247,7 +318,7 @@ class GenerationService:
                 time.sleep(0.01)
         threading.Thread(target=watch, daemon=True).start()
 
-    def _write_metadata(self, paths: OutputPaths, request: dict, result: dict[str, str], provider: Provider) -> None:
+    def _write_metadata(self, paths: OutputPaths, request: dict, result: dict[str, object], provider: Provider | None) -> None:
         metadata_request = {
             key: (value.value if isinstance(value, Capability) else value.name if isinstance(value, Path) else value)
             for key, value in request.items()
@@ -256,11 +327,11 @@ class GenerationService:
             "schema_version": 1,
             "output_id": paths.output_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "provider": provider.facts.provider_id,
-            "provider_revision": provider.facts.revision,
+            "provider": provider.facts.provider_id if provider else "kokoro-onnx",
+            "provider_revision": provider.facts.revision if provider else "0.5.0",
             "request": metadata_request,
             "result": result,
-            "lineage": ([{"output_id": request["source_output_id"], "relation": "edited_from"}]
+            "lineage": ([{"output_id": request["source_output_id"], "relation": "narrated_from" if request.get("capability") == Capability.NARRATION else "edited_from"}]
                         if request.get("source_output_id") else []),
         }
         (paths.partial_dir / "metadata.json").write_text(json.dumps(metadata, sort_keys=True, separators=(",", ":")))
@@ -340,7 +411,7 @@ class GenerationService:
             import imageio_ffmpeg
             ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
             subprocess.run(
-                [ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", crf, "-pix_fmt", "yuv420p", str(temporary)],
+                [ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-c:a", "aac", "-preset", "medium", "-crf", crf, "-pix_fmt", "yuv420p", str(temporary)],
                 check=True, capture_output=True, text=True,
             )
             os.replace(temporary, destination)

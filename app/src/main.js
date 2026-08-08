@@ -133,6 +133,7 @@ for (const button of document.querySelectorAll("[data-export]")) button.addEvent
   finally { button.disabled = false; }
 });
 $("#edit-video").addEventListener("click", () => { $("#video-edit-controls").hidden = !$("#video-edit-controls").hidden; });
+$("#add-voice").addEventListener("click", () => { $("#voice-controls").hidden = !$("#voice-controls").hidden; });
 $("#change-amount").addEventListener("input", () => { $("#change-amount-value").textContent = $("#change-amount").value; });
 $("#apply-video-edit").addEventListener("click", async () => {
   const prompt = $("#edit-prompt").value.trim(); const changeAmount = Number($("#change-amount").value);
@@ -142,6 +143,15 @@ $("#apply-video-edit").addEventListener("click", async () => {
     const accepted = await invoke("edit_video", { request: { modelId: state.modelId, sourceOutputId: state.selectedVariant, prompt, seed: Number($("#seed").value), recipe: state.recipe, changeAmount } });
     state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading edit model", progress: 0 };
     jobStatus.textContent = "Applying video edit…"; updateControls();
+  } catch (reason) { setError(String(reason)); }
+});
+$("#generate-voice").addEventListener("click", async () => {
+  const text = $("#narration-text").value.trim();
+  if (!state.selectedVariant || !text) return setError("Add narration text before generating the voice.");
+  try {
+    const accepted = await invoke("narrate", { request: { sourceOutputId: state.selectedVariant, text } });
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading narration model", progress: 0 };
+    jobStatus.textContent = "Generating narration…"; updateControls();
   } catch (reason) { setError(String(reason)); }
 });
 $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });

@@ -212,14 +212,14 @@ Prompt-based video editing first reuses **LTX** through `LTXConditionPipeline`, 
 - IPC request: `edit_video` → job ID, reusing the single-active-job controller and shared progress/status/cancel contract.
 - Not supported in v1: masks, region editing, object insertion, or lip synchronization. Whole-frame prompt editing only.
 
-### Voice narration (`chatterbox-tts`, Stage 5)
+### Voice narration (`kokoro-onnx`, Stage 5)
 
 A separate, much lighter capability from video generation/editing — adds an editable narration track to any completed video via local text-to-speech, instead of chasing joint audio-video generation (ruled out above as impractical at ~157GB).
 
-- Library: `chatterbox-tts` (Resemble AI, MIT-licensed, officially supports MPS) — default to the 0.5B English checkpoint (`ResembleAI/chatterbox`). An unrelated development cache exists on this machine, but release behavior and clean-environment testing must use SynVid's app-owned model root. Multilingual and "Turbo" (350M, faster) variants exist and could be added later as alternative voices/speeds, not required for v1.
+- Library: `kokoro-onnx` (MIT runtime; Apache-2.0 Kokoro model) — default to the compact English stock voice `af_bella`. Release behavior and clean-environment testing must use SynVid's app-owned model root, never another application's cache. Additional released stock voices can be added later, not required for v1.
 - Input: narration text (separate from the visual prompt) and the target video's duration. The video duration is authoritative in v1: shorter narration is padded with silence; narration longer than the video beyond a small mux tolerance is rejected with its measured duration and a prompt to shorten the script. Do not cut off speech, stretch it, extend the video, or change playback speed silently.
-- Process: run `chatterbox-tts` to synthesize WAV, then invoke the exact `imageio-ffmpeg` binary without a shell to copy the video stream and replace any existing audio stream. Produce a new output with parent lineage; never mutate the source file. Chatterbox's Perth watermark must be disclosed in README/About metadata.
-- v1 explicitly does not include: custom voice cloning from a user-supplied reference clip (Chatterbox supports this from ~5s of audio, but it's an obvious v2 addition, not needed to satisfy "editable narration" — adding it now would repeat the scope-creep pattern already flagged in Positioning).
+- Process: run `kokoro-onnx` to synthesize WAV, then invoke the exact `imageio-ffmpeg` binary without a shell to copy the video stream and replace any existing audio stream. Produce a new output with parent lineage; never mutate the source file.
+- v1 explicitly does not include custom voice cloning from a user-supplied reference clip; it uses only a reviewed stock voice.
 - Do not assume TTS can remain resident beside a diffusion pipeline. Stage 5 measures combined peak memory and either keeps it resident or unloads it after each job based on evidence.
 - IPC request: `narrate` (`{source_output_id, text}` → job ID), using the same single-active-job controller and progress/status/cancel contract as generation and editing.
 
@@ -321,7 +321,7 @@ v1 uses manual signed-DMG updates: installing a newer app must leave Application
   - Validate low/high change amounts on an LTX-generated source. Then, if Wan2.1-1.3B passed Stage 3, A/B the Wan v2v pipeline on the same sources; expose it only if the added cost provides a useful result.
   - Verify LTX- and Wan-origin source clips where available, source immutability, cancellation cleanup, exact output duration/FPS/dimensions, and that edited descendants retain the same validated export controls.
 - [ ] **Stage 5 — voice narration**
-  - Add `chatterbox-tts` in this stage's locked dependency update, the `narrate` IPC request, direct ffmpeg invocation, output lineage, and the Add Voice panel.
+  - Add `kokoro-onnx` in this stage's locked dependency update, the `narrate` IPC request, direct ffmpeg invocation, output lineage, and the Add Voice panel.
   - Enforce the duration policy: pad shorter speech; reject overlong speech with a useful measured error; replace existing audio without changing video duration.
   - Measure TTS-plus-diffusion residency and choose unload behavior; disclose the TTS watermark and verify narration replacement by listening and with `ffprobe`. Export profiles and any interpolated FPS must preserve narration duration and A/V sync.
 - [ ] **Stage 6 — image editing, license-gated**

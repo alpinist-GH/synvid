@@ -14,6 +14,7 @@ from .providers.flux import FluxSchnellProvider
 from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
+from .narration import KokoroNarrator, NarrationError
 
 
 WORKER_VERSION = "0.1.0"
@@ -52,6 +53,7 @@ def _service() -> GenerationService:
         estimate,
         additional_providers=(flux,),
         estimates={"flux-schnell": flux_estimate},
+        narrator=KokoroNarrator(paths.models / "kokoro-onnx" / "snapshot"),
     )
 
 
@@ -114,6 +116,18 @@ def serve() -> int:
 
                 job = service.submit_video_edit(request.payload, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "narrate":
+                def progress(job):
+                    _reply(request, "progress", service._job_payload(job))
+
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output:
+                        payload.update(output)
+                    _reply(request, "terminal", payload)
+
+                job = service.submit_narration(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "export_video":
                 output_id = request.payload.get("output_id")
                 profile = request.payload.get("profile")
@@ -134,7 +148,7 @@ def serve() -> int:
                 _reply(request, "error", {"code": "unsupported_request", "message": "request is not available in Stage 0"})
         except BusyError as error:
             _reply(request, "error", {"code": "busy", "message": str(error), "current_job_id": error.current_job_id})
-        except (ProtocolError, GenerationError, KeyError, TypeError) as error:
+        except (ProtocolError, GenerationError, NarrationError, KeyError, TypeError) as error:
             # A malformed request cannot be trusted to contain a valid ID.
             _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "invalid_request", "message": str(error)})
     return 0
