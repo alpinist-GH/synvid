@@ -62,6 +62,22 @@ class GenerationServiceTests(unittest.TestCase):
                 service.submit(self.PAYLOAD, lambda _job: None, lambda _job, _output: None)
             service.cancel(first.job_id)
 
+    def test_model_catalog_removal_and_temporary_cleanup_stay_in_owned_roots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            snapshot = service.paths.models / "qwen-image-edit" / "snapshot"
+            snapshot.mkdir(parents=True); (snapshot / "model.safetensors").write_bytes(b"model")
+            catalog = {item["model_id"]: item for item in service.model_catalog()["models"]}
+            self.assertTrue(catalog["qwen-image-edit"]["installed"])
+            self.assertIn("Edits a completed image", catalog["qwen-image-edit"]["reason"])
+            removed = service.remove_model("qwen-image-edit")
+            self.assertTrue(removed["removed"]); self.assertFalse(snapshot.parent.exists())
+            temporary = service.paths.temporary / "imports" / "source.png"
+            temporary.parent.mkdir(parents=True); temporary.write_bytes(b"temporary")
+            cleaned = service.clean_temporary()
+            self.assertEqual(cleaned["freed_bytes"], len(b"temporary")); self.assertFalse(temporary.exists())
+            self.assertTrue(service.paths.outputs.is_dir())
+
     def test_story_planner_draft_is_cancellable_and_unloaded(self):
         class BlockingPlanner:
             def __init__(self): self.unloaded = False

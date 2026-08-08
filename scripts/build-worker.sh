@@ -32,6 +32,28 @@ PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
 
 worker_bin="$resource_dir/synvid-worker/synvid-worker"
 test -x "$worker_bin"
+# Homebrew's framework Python can leave PyInstaller's base_library.zip out of
+# an otherwise successful one-folder collection. The embedded interpreter
+# cannot start without stdlib encodings, so create a deterministic stdlib zip
+# from the exact locked build Python when that collector defect occurs.
+base_library="$resource_dir/synvid-worker/_internal/base_library.zip"
+if [ ! -f "$base_library" ]; then
+    stdlib_dir=$("$python_bin" -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
+    "$python_bin" - "$stdlib_dir" "$base_library" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+    for path in source.rglob("*.py"):
+        relative = path.relative_to(source)
+        if "__pycache__" not in relative.parts and "site-packages" not in relative.parts:
+            archive.write(path, relative.as_posix())
+PY
+fi
+test -f "$base_library"
 # eSpeak's native library resolves phontab relative to its own directory even
 # though the Python loader refers to `espeak-ng-data`. Keep both layouts in the
 # one-folder bundle; a system espeak installation is never an allowed fallback.

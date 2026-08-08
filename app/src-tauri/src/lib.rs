@@ -644,6 +644,76 @@ fn list_outputs(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result
 }
 
 #[tauri::command]
+fn model_catalog(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("model_catalog", json!({}))?,
+    )
+}
+
+#[tauri::command]
+fn remove_model(
+    model_id: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if model_id.len() > 64
+        || !model_id.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return Err("Invalid model removal request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("remove_model", json!({"model_id": model_id}))?,
+    )
+}
+
+#[tauri::command]
+fn clean_temporary(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("clean_temporary", json!({}))?,
+    )
+}
+
+#[tauri::command]
+fn output_media_path(
+    app: tauri::AppHandle,
+    output_id: String,
+    media_file: String,
+) -> Result<String, String> {
+    if output_id.len() != 36
+        || !output_id
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
+        || !matches!(media_file.as_str(), "video.mp4" | "image.png")
+    {
+        return Err("Invalid output media request.".into());
+    }
+    let path = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/outputs")
+        .join(output_id)
+        .join(media_file);
+    let path = match path {
+        path if path.is_file() && !path.is_symlink() => path,
+        _ => return Err("The selected output media is unavailable.".into()),
+    };
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "The selected output media has an unsupported path.".into())
+}
+
+#[tauri::command]
 fn recovery_preview(
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
@@ -667,17 +737,20 @@ fn recover(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Valu
 
 #[tauri::command]
 fn export_video(
+    app: tauri::AppHandle,
     output_id: String,
     profile: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if output_id.is_empty()
-        || output_id.len() > 128
+    if output_id.len() != 36
+        || !output_id
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
         || !matches!(profile.as_str(), "high" | "balanced" | "small")
     {
         return Err("Invalid export request.".into());
     }
-    response_payload(
+    let exported = response_payload(
         supervisor
             .lock()
             .expect("worker supervisor lock poisoned")
@@ -685,6 +758,58 @@ fn export_video(
                 "export_video",
                 json!({"output_id": output_id, "profile": profile}),
             )?,
+    )?;
+    let Some(destination) = rfd::FileDialog::new()
+        .add_filter("MPEG-4 Video", &["mp4"])
+        .set_file_name(format!("SynVid-{}-{}.mp4", &output_id[..8], profile))
+        .save_file()
+    else {
+        return Ok(json!({"saved": false}));
+    };
+    let destination = if destination.extension().is_none() {
+        destination.with_extension("mp4")
+    } else {
+        destination
+    };
+    if destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("mp4")
+    {
+        return Err("Export filenames must use the .mp4 extension.".into());
+    }
+    if destination.exists() {
+        return Err("That file already exists. Choose a different final filename.".into());
+    }
+    let source = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Home directory is unavailable.")?
+        .join("Library/Application Support/SynVid/outputs")
+        .join(&output_id)
+        .join("exports")
+        .join(&profile)
+        .with_extension("mp4");
+    if !source.is_file() || source.is_symlink() {
+        return Err("The rendered export is unavailable.".into());
+    }
+    let parent = destination
+        .parent()
+        .filter(|path| path.is_dir())
+        .ok_or("The selected export folder is unavailable.")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable.")?
+        .as_nanos();
+    let temporary = parent.join(format!(".synvid-export-{nonce}.partial"));
+    fs::copy(&source, &temporary).map_err(|_| "Could not save the final export.")?;
+    if fs::hard_link(&temporary, &destination).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err("Could not save the final export; choose a different filename.".into());
+    }
+    fs::remove_file(&temporary).map_err(|_| "Could not finalize the saved export.")?;
+    Ok(
+        json!({"saved": true, "profile": exported["profile"], "file_name": destination.file_name().and_then(|name| name.to_str())}),
     )
 }
 
@@ -933,6 +1058,10 @@ pub fn run() {
             hugging_face_credential_status,
             worker_status,
             list_outputs,
+            model_catalog,
+            remove_model,
+            clean_temporary,
+            output_media_path,
             recovery_preview,
             recover,
             generate,

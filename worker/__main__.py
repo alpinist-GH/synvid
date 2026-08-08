@@ -95,6 +95,12 @@ def serve() -> int:
                 _reply(request, "hello_ack", {"protocol_version": version, "worker_version": WORKER_VERSION, "features": []})
             elif request.kind == "get_status":
                 _reply(request, "status", service.status_payload())
+            elif request.kind == "model_catalog":
+                _reply(request, "status", service.model_catalog())
+            elif request.kind == "remove_model":
+                _reply(request, "status", service.remove_model(request.payload.get("model_id")))
+            elif request.kind == "clean_temporary":
+                _reply(request, "status", service.clean_temporary())
             elif request.kind == "list_outputs":
                 _reply(request, "status", {"outputs": service.library_payload()})
             elif request.kind == "recovery_preview":

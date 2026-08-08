@@ -12,6 +12,7 @@ import re
 from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
+from .models import REGISTRY
 from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio, synthesize_segmented, write_srt
 from .outputs import OutputPaths, allocate, promote, resolve_owned_file
 from .paths import AppPaths
@@ -421,6 +422,82 @@ class GenerationService:
             "measured_image_profile": image_profile,
             "available_models": available_models,
         }
+
+    def model_catalog(self) -> dict:
+        """Expose reviewed model facts and local install state, never a download URL."""
+        return {"models": [self._model_status(model_id) for model_id in REGISTRY] + [self._kokoro_status()]}
+
+    def remove_model(self, model_id: str) -> dict:
+        if self.jobs.current() is not None:
+            raise GenerationError("wait for the active job before removing a model")
+        if model_id not in REGISTRY and model_id != "kokoro-onnx":
+            raise GenerationError("selected model is not managed by SynVid")
+        if model_id in self._providers:
+            self._providers[model_id].unload()
+        elif model_id == "kokoro-onnx" and self.narrator is not None:
+            self.narrator.unload()
+        root = self.paths.models / model_id
+        if root.is_symlink() or not root.exists():
+            return {"removed": False, "model_id": model_id, "freed_bytes": 0}
+        if not root.is_dir():
+            raise GenerationError("model storage is invalid; removal was refused")
+        freed_bytes = self._tree_size(root)
+        shutil.rmtree(root)
+        return {"removed": True, "model_id": model_id, "freed_bytes": freed_bytes}
+
+    def clean_temporary(self) -> dict:
+        if self.jobs.current() is not None:
+            raise GenerationError("wait for the active job before cleaning temporary files")
+        root = self.paths.temporary
+        freed_bytes = self._tree_size(root)
+        for child in root.iterdir() if root.is_dir() else ():
+            if child.is_symlink() or child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                shutil.rmtree(child)
+        root.mkdir(parents=True, exist_ok=True)
+        return {"freed_bytes": freed_bytes}
+
+    def _model_status(self, model_id: str) -> dict:
+        spec = REGISTRY[model_id]
+        root = self.paths.models / model_id
+        installed = root.is_dir() and not root.is_symlink() and (root / "snapshot").is_dir()
+        return {
+            "model_id": model_id,
+            "display_name": spec.display_name,
+            "reason": spec.reason,
+            "repository": spec.repository,
+            "revision": spec.revision,
+            "license": spec.license_name,
+            "profile": spec.profile,
+            "expected_size_gib": spec.expected_size_gib,
+            "requires_access_confirmation": spec.requires_access_confirmation,
+            "installed": installed,
+            "installed_bytes": self._tree_size(root) if installed else 0,
+        }
+
+    def _kokoro_status(self) -> dict:
+        root = self.paths.models / "kokoro-onnx"
+        installed = root.is_dir() and not root.is_symlink() and (root / "snapshot").is_dir()
+        return {
+            "model_id": "kokoro-onnx",
+            "display_name": "Kokoro Voice",
+            "reason": "Synthesizes local narration for completed videos and Story Mode scenes.",
+            "repository": "hexgrad/Kokoro-82M",
+            "revision": "SynVid verified voice snapshot",
+            "license": "Apache-2.0 model; MIT runtime",
+            "profile": "shareable",
+            "expected_size_gib": 0.4,
+            "requires_access_confirmation": False,
+            "installed": installed,
+            "installed_bytes": self._tree_size(root) if installed else 0,
+        }
+
+    @staticmethod
+    def _tree_size(root: Path) -> int:
+        if root.is_symlink() or not root.is_dir():
+            return 0
+        return sum(path.stat().st_size for path in root.rglob("*") if path.is_file() and not path.is_symlink())
 
     @staticmethod
     def _measured_profiles(provider: Provider) -> tuple[dict | None, dict | None]:

@@ -19,6 +19,8 @@ IMMUTABLE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 @dataclass(frozen=True)
 class ModelSpec:
     model_id: str
+    display_name: str
+    reason: str
     capabilities: frozenset[Capability]
     profile: str
     repository: str
@@ -60,17 +62,17 @@ _TRANSFORMERS_FILES = (
 )
 
 REGISTRY = {
-    "ltx-video": ModelSpec("ltx-video", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Lightricks/LTX-Video", "8984fa25007f376c1a299016d0957a37a2f797bb", "LTX-Video Open Weights License", 24.0, True, _DIFFUSERS_FILES + ("ltxv-2b-0.9.8-distilled.safetensors",), _HF_LFS),
-    "flux-schnell": ModelSpec("flux-schnell", frozenset({Capability.IMAGE_GENERATION}), "shareable", "black-forest-labs/FLUX.1-schnell", "741f7c3ce8b383c54771c7003378a50191e9efe9", "Apache-2.0", 54.0, True, _DIFFUSERS_FILES + ("flux1-schnell.safetensors",), _HF_LFS),
-    "flux-dev": ModelSpec("flux-dev", frozenset({Capability.IMAGE_GENERATION}), "personal-research", "black-forest-labs/FLUX.1-dev", "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21", "FLUX.1-dev non-commercial", 54.0, True, _DIFFUSERS_FILES + ("LICENSE.md", "flux1-dev.safetensors"), _HF_LFS),
-    "flux-kontext-dev": ModelSpec("flux-kontext-dev", frozenset({Capability.IMAGE_GENERATION}), "personal-research", "black-forest-labs/FLUX.1-Kontext-dev", "24e9dedc4ef646698dc8eb4e18ae2cec3c9fea0d", "FLUX.1-dev non-commercial", 54.0, True, _DIFFUSERS_FILES + ("LICENSE.md", "flux1-kontext-dev.safetensors"), _HF_LFS),
+    "ltx-video": ModelSpec("ltx-video", "LTX Video", "Creates local videos from text and edits completed LTX videos.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Lightricks/LTX-Video", "8984fa25007f376c1a299016d0957a37a2f797bb", "LTX-Video Open Weights License", 24.0, True, _DIFFUSERS_FILES + ("ltxv-2b-0.9.8-distilled.safetensors",), _HF_LFS),
+    "flux-schnell": ModelSpec("flux-schnell", "FLUX.1-schnell", "Creates still images for prompts and Story Mode storyboards.", frozenset({Capability.IMAGE_GENERATION}), "shareable", "black-forest-labs/FLUX.1-schnell", "741f7c3ce8b383c54771c7003378a50191e9efe9", "Apache-2.0", 54.0, True, _DIFFUSERS_FILES + ("flux1-schnell.safetensors",), _HF_LFS),
+    "flux-dev": ModelSpec("flux-dev", "FLUX.1-dev", "Optional higher-capacity still-image model for personal research only.", frozenset({Capability.IMAGE_GENERATION}), "personal-research", "black-forest-labs/FLUX.1-dev", "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21", "FLUX.1-dev non-commercial", 54.0, True, _DIFFUSERS_FILES + ("LICENSE.md", "flux1-dev.safetensors"), _HF_LFS),
+    "flux-kontext-dev": ModelSpec("flux-kontext-dev", "FLUX.1-Kontext-dev", "Optional instruction-based image editing for personal research only.", frozenset({Capability.IMAGE_GENERATION}), "personal-research", "black-forest-labs/FLUX.1-Kontext-dev", "24e9dedc4ef646698dc8eb4e18ae2cec3c9fea0d", "FLUX.1-dev non-commercial", 54.0, True, _DIFFUSERS_FILES + ("LICENSE.md", "flux1-kontext-dev.safetensors"), _HF_LFS),
     # The shareable image-editing choice.  This is intentionally not exposed
     # until a measured MPS profile exists; its sizeable checkpoint must not be
     # presented as a supported feature merely because it is permissively licensed.
-    "qwen-image-edit": ModelSpec("qwen-image-edit", frozenset({Capability.IMAGE_EDITING}), "shareable", "Qwen/Qwen-Image-Edit", "ac7f9318f633fc4b5778c59367c8128225f1e3de", "Apache-2.0", 57.7, True, _DIFFUSERS_FILES + ("processor/*.json",), _HF_LFS),
-    "qwen-story-planner": ModelSpec("qwen-story-planner", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
-    "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS),
-    "wan2.1-14b": ModelSpec("wan2.1-14b", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS),
+    "qwen-image-edit": ModelSpec("qwen-image-edit", "Qwen Image Edit", "Edits a completed image from a text instruction.", frozenset({Capability.IMAGE_EDITING}), "shareable", "Qwen/Qwen-Image-Edit", "ac7f9318f633fc4b5778c59367c8128225f1e3de", "Apache-2.0", 57.7, True, _DIFFUSERS_FILES + ("processor/*.json",), _HF_LFS),
+    "qwen-story-planner": ModelSpec("qwen-story-planner", "Qwen Story Planner", "Optional local draft-scene assistant; currently unavailable because its structured-output quality gate did not pass.", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
+    "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", "Wan 2.1 1.3B", "Experimental text-to-video candidate; not exposed because its measured MPS output was not watchable.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS),
+    "wan2.1-14b": ModelSpec("wan2.1-14b", "Wan 2.1 14B", "Experimental text/image-to-video candidate; requires a separate measured memory strategy before use.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS),
 }
 
 

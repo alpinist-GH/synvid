@@ -2,6 +2,7 @@
 // Tauri exposes this narrow API only because `withGlobalTauri` is enabled in
 // the checked-in desktop configuration.
 const invoke = window.__TAURI__.core.invoke;
+const convertFileSrc = window.__TAURI__.core.convertFileSrc;
 
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
@@ -80,7 +81,29 @@ function promoteVariant(variant) {
   $("#image-edit-controls").hidden = variant.mediaFile !== "image.png";
   $("#video-edit-controls").hidden = true;
   $("#voice-controls").hidden = true;
+  void previewVariant(variant);
   renderVariants();
+}
+async function previewVariant(variant) {
+  const preview = $("#media-preview"); const video = $("#video-preview"); const image = $("#image-preview"); const status = $("#preview-status");
+  preview.hidden = false; video.hidden = true; image.hidden = true; video.pause(); video.removeAttribute("src"); image.removeAttribute("src");
+  status.textContent = "Loading local preview…";
+  try {
+    const path = await invoke("output_media_path", { outputId: variant.outputId, mediaFile: variant.mediaFile });
+    const source = convertFileSrc(path);
+    if (variant.mediaFile === "video.mp4") {
+      video.src = source; video.hidden = false; video.load();
+      status.textContent = "Preview ready. Use the video controls to play, pause, seek, or adjust volume.";
+    } else if (variant.mediaFile === "image.png") {
+      image.src = source; image.hidden = false;
+      status.textContent = "Preview ready.";
+    } else {
+      preview.hidden = true;
+    }
+  } catch (reason) {
+    status.textContent = "Preview unavailable. The completed output remains in your local Library.";
+    setError(String(reason));
+  }
 }
 function recordTerminal(events) {
   for (const event of events) {
@@ -121,6 +144,47 @@ async function showRecovery() {
     const reserved = preview.reservedBytes ?? preview.reserved_bytes ?? 0;
     $("#recovery-preview").textContent = `${count} incomplete output${count === 1 ? "" : "s"} and ${reserved} reserved byte${reserved === 1 ? "" : "s"} can be safely recovered. Completed output will not be deleted.`;
   } catch { $("#recovery-preview").textContent = "Worker unavailable. Reopen SynVid to inspect recovery state."; }
+}
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"]; const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / (1024 ** power)).toFixed(power < 3 ? 0 : 1)} ${units[power]}`;
+}
+function renderModelCatalog(models) {
+  const list = $("#model-list"); list.replaceChildren();
+  for (const model of models) {
+    const item = document.createElement("article"); item.className = "model-card";
+    const title = document.createElement("h4"); title.textContent = model.display_name;
+    const reason = document.createElement("p"); reason.textContent = model.reason;
+    const facts = document.createElement("p"); facts.className = "field-help";
+    facts.textContent = `${model.license} · ${model.expected_size_gib} GB expected · ${model.profile}${model.requires_access_confirmation ? " · access confirmation required" : ""}`;
+    const status = document.createElement("p"); status.className = "model-status";
+    status.textContent = model.installed
+      ? `Installed · ${formatBytes(model.installed_bytes)} on disk`
+      : "Not downloaded · shown for planning only until its explicit download approval.";
+    item.append(title, reason, facts, status);
+    if (model.installed) {
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Remove model";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Remove ${model.display_name}? This deletes only its SynVid model files and cannot be undone.`)) return;
+        remove.disabled = true;
+        try { const result = await invoke("remove_model", { modelId: model.model_id }); $("#cleanup-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes)}.` : `${model.display_name} was already absent.`; await showSettings(); }
+        catch (reason) { setError(String(reason)); remove.disabled = false; }
+      });
+      item.append(remove);
+    }
+    list.append(item);
+  }
+}
+async function showSettings() {
+  const dialog = $("#settings-dialog"); $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
+  try { const { models = [] } = await invoke("model_catalog"); renderModelCatalog(models); }
+  catch (reason) { $("#model-list").textContent = "Model catalog unavailable while the worker is disconnected."; setError(String(reason)); }
+}
+async function showAbout() {
+  const dialog = $("#about-dialog"); $("#about-version").textContent = "Version…"; dialog.showModal();
+  try { $("#about-version").textContent = `Version ${await window.__TAURI__.app.getVersion()}`; }
+  catch { $("#about-version").textContent = "Version unavailable"; }
 }
 function renderStory(story) {
   activeStory = story; if (!story) activeSceneId = null; $("#story-name").value = story?.title || ""; $("#story-premise").value = story?.premise || ""; $("#story-style").value = story?.style_bible || ""; $("#story-aspect").value = story?.aspect_ratio || "16:9";
@@ -172,7 +236,12 @@ $("#model").addEventListener("change", () => { state.modelId = $("#model").value
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;
-  try { const result = await invoke("export_video", { outputId: state.selectedVariant, profile: button.dataset.export }); $("#result-message").textContent = `${result.profile} export completed without regenerating the canonical video.`; }
+  try {
+    const result = await invoke("export_video", { outputId: state.selectedVariant, profile: button.dataset.export });
+    $("#result-message").textContent = result.saved
+      ? `${result.profile} export saved as ${result.fileName} without regenerating the canonical video.`
+      : "Export cancelled; the canonical video remains unchanged.";
+  }
   catch (reason) { setError(String(reason)); }
   finally { button.disabled = false; }
 });
@@ -212,7 +281,7 @@ $("#generate-voice").addEventListener("click", async () => {
 $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
-$("#library-button").addEventListener("click", showLibrary); $("#recovery-button").addEventListener("click", showRecovery);
+$("#library-button").addEventListener("click", showLibrary); $("#settings-button").addEventListener("click", showSettings); $("#about-button").addEventListener("click", showAbout); $("#recovery-button").addEventListener("click", showRecovery);
 $("#story-button").addEventListener("click", showStory);
 $("#story-list").addEventListener("change", async () => { const id = $("#story-list").value; if (!id) return renderStory(null); try { renderStory(await invoke("story_get", { storyId: id })); } catch (reason) { setError(String(reason)); } });
 $("#save-story").addEventListener("click", async () => {
@@ -240,6 +309,13 @@ $("#replace-story-narration").addEventListener("click", async () => { if (!activ
 $("#compose-story").addEventListener("click", async () => { if (!activeStory) return; try { const accepted = await invoke("compose_story", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision } }); state.activeJob = accepted.job_id; jobStatus.textContent = "Composing approved scenes…"; } catch (reason) { setError(String(reason)); } });
 for (const button of document.querySelectorAll(".close-dialog")) button.addEventListener("click", () => button.closest("dialog").close());
 $("#run-recovery").addEventListener("click", async () => { const button = $("#run-recovery"); button.disabled = true; try { const recovered = await invoke("recover"); $("#recovery-preview").textContent = `Recovered ${recovered.partialOutputCount ?? recovered.partial_output_count ?? 0} incomplete output(s). Completed media was not changed.`; } catch (reason) { $("#recovery-preview").textContent = `Recovery could not run: ${String(reason)}`; } finally { button.disabled = false; } });
+$("#clean-temporary").addEventListener("click", async () => {
+  if (!window.confirm("Clean SynVid temporary files? Completed outputs, stories, and models will not be deleted.")) return;
+  const button = $("#clean-temporary"); button.disabled = true;
+  try { const result = await invoke("clean_temporary"); $("#cleanup-status").textContent = `Temporary files cleaned; freed ${formatBytes(result.freed_bytes)}.`; }
+  catch (reason) { $("#cleanup-status").textContent = `Cleanup could not run: ${String(reason)}`; }
+  finally { button.disabled = false; }
+});
 generateButton.addEventListener("click", async () => {
   const prompt = $("#prompt").value.trim(); const seed = Number($("#seed").value);
   if (!prompt) return setError(`Add an ${isImageModel() ? "image" : "video"} description before generating.`);

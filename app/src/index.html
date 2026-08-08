@@ -16,7 +16,11 @@
           <button id="story-button" class="nav-item" type="button">Story</button>
           <button id="library-button" class="nav-item" type="button">Library</button>
         </nav>
-        <button id="recovery-button" class="nav-item settings" type="button">Recovery Center</button>
+        <div class="sidebar-footer">
+          <button id="settings-button" class="nav-item" type="button">Settings</button>
+          <button id="about-button" class="nav-item" type="button">About SynVid</button>
+          <button id="recovery-button" class="nav-item" type="button">Recovery Center</button>
+        </div>
       </aside>
 
       <section class="compose" aria-labelledby="compose-title">
@@ -47,12 +51,18 @@
         <section class="result" aria-labelledby="result-title">
           <h3 id="result-title">Current selection</h3>
           <p id="result-message">No completed output in this window yet.</p>
+          <div id="media-preview" class="media-preview" hidden aria-live="polite">
+            <video id="video-preview" controls playsinline preload="metadata" hidden aria-label="Selected generated video"></video>
+            <img id="image-preview" hidden alt="Selected generated image" />
+            <p id="preview-status" class="field-help"></p>
+          </div>
           <div id="export-controls" class="export-controls" hidden>
             <button id="edit-video" type="button">Edit video</button>
             <button id="add-voice" type="button">Add Voice</button>
-            <button type="button" data-export="high">Export High</button>
-            <button type="button" data-export="balanced">Export Balanced</button>
-            <button type="button" data-export="small">Export Small File</button>
+            <p class="field-help">Each export opens Save As, where you choose the destination folder and final `.mp4` filename.</p>
+            <button type="button" data-export="high">Save High Export…</button>
+            <button type="button" data-export="balanced">Save Balanced Export…</button>
+            <button type="button" data-export="small">Save Small File Export…</button>
           </div>
           <section id="image-edit-controls" class="export-controls" hidden aria-labelledby="edit-image-title">
             <h4 id="edit-image-title">Edit selected image</h4>
@@ -132,6 +142,25 @@
       <h2 id="library-title">Library</h2>
       <p class="field-help">Library metadata remains local. Select an item to promote it as this window’s current variant.</p>
       <ol id="library-list" class="variant-list"></ol>
+      <button class="secondary close-dialog" type="button">Close</button>
+    </dialog>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <h2 id="settings-title">Settings</h2>
+      <p class="field-help">Models are stored only in SynVid Application Support. Downloads always require a separate license, size, and revision confirmation.</p>
+      <section aria-labelledby="models-title"><h3 id="models-title">Local AI models</h3><div id="model-list" class="model-list" aria-live="polite">Loading model catalog…</div></section>
+      <section class="temporary-cleanup" aria-labelledby="temporary-title">
+        <h3 id="temporary-title">Temporary files</h3>
+        <p class="field-help">Remove imported copies, interrupted-work files, and temporary render data. Completed outputs, stories, and installed models are not affected.</p>
+        <button id="clean-temporary" type="button">Clean temporary files</button>
+        <p id="cleanup-status" class="field-help" role="status"></p>
+      </section>
+      <button class="secondary close-dialog" type="button">Close</button>
+    </dialog>
+    <dialog id="about-dialog" aria-labelledby="about-title">
+      <h2 id="about-title">About SynVid</h2>
+      <p id="about-version">Version…</p>
+      <p>Copyright © Vu-Hung Quan 2026</p>
+      <p class="field-help">SynVid creates media locally and keeps model downloads and generated work on this Mac.</p>
       <button class="secondary close-dialog" type="button">Close</button>
     </dialog>
     <dialog id="story-dialog" aria-labelledby="story-title">
