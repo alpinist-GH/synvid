@@ -49,10 +49,19 @@
           <h3 id="result-title">Current selection</h3>
           <p id="result-message">No completed output in this window yet.</p>
           <div id="export-controls" class="export-controls" hidden>
+            <button id="edit-video" type="button">Edit video</button>
             <button type="button" data-export="high">Export High</button>
             <button type="button" data-export="balanced">Export Balanced</button>
             <button type="button" data-export="small">Export Small File</button>
           </div>
+          <section id="video-edit-controls" class="export-controls" hidden aria-labelledby="edit-video-title">
+            <h4 id="edit-video-title">Edit selected video</h4>
+            <label for="edit-prompt">Describe the change</label>
+            <textarea id="edit-prompt" maxlength="4000" placeholder="Make the flower glow softly at sunset"></textarea>
+            <label for="change-amount">Change amount <output id="change-amount-value">0.35</output></label>
+            <input id="change-amount" type="range" min="0.05" max="0.95" step="0.05" value="0.35" />
+            <button id="apply-video-edit" type="button">Apply edit</button>
+          </section>
         </section>
       </section>
 

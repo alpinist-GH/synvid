@@ -141,3 +141,39 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(service.status_payload()["available_models"]["selected-image"]["measured_image_profile"]["steps"], 4)
             with self.assertRaisesRegex(Exception, "selected model is not available"):
                 service.submit({"model_id": "wan2.1-14b", "prompt": "no", "seed": 1}, lambda _job: None, lambda _job, _output: None)
+
+    def test_video_edit_creates_immutable_descendant_with_lineage(self):
+        class Profile:
+            width = height = 64
+            frames = 9
+            fps = 8
+            steps = 3
+            guidance_scale = 1.0
+
+        class Recipes:
+            recipes = {"Balanced": Profile()}
+
+        class EditingProvider(FakeProvider):
+            facts = ProviderFacts("fake-edit", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "fixture-edit-v1", "test-only", False)
+            def measured_recipes(self): return Recipes()
+            def run(self, request, progress, cancelled):
+                self.request = request
+                (request.output_dir / "video.mp4").write_bytes(b"fixture video")
+                return {"media_file": "video.mp4"}
+
+        with tempfile.TemporaryDirectory() as temp:
+            provider = EditingProvider()
+            provider.facts = EditingProvider.facts
+            service = self._service(temp, provider)
+            source_dir = service.paths.outputs / "11111111-1111-1111-1111-111111111111"
+            source_dir.mkdir(parents=True)
+            (source_dir / "video.mp4").write_bytes(b"source")
+            (source_dir / "metadata.json").write_text(json.dumps({"request": {"capability": "video_generation", "width": 64, "height": 64, "frames": 9, "fps": 8}}))
+            terminal = threading.Event(); received = []
+            service.submit_video_edit({"prompt": "change it", "seed": 2, "recipe": "Balanced", "source_output_id": source_dir.name, "change_amount": 0.35}, lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()))
+            self.assertTrue(terminal.wait(2))
+            output_id = received[0][1]["output_id"]
+            metadata = json.loads((service.paths.outputs / output_id / "metadata.json").read_text())
+            self.assertEqual(metadata["lineage"], [{"output_id": source_dir.name, "relation": "edited_from"}])
+            self.assertEqual(provider.request.source_video, source_dir / "video.mp4")
+            self.assertTrue((source_dir / "video.mp4").is_file())

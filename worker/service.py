@@ -24,6 +24,7 @@ class GenerationError(ValueError):
 
 
 _SOURCE_IMAGE_ID = re.compile(r"^[a-z0-9-]{16,128}$")
+_OUTPUT_ID = re.compile(r"^[0-9a-f-]{36}$")
 
 
 def _required(payload: dict, name: str, typ: type):
@@ -62,6 +63,17 @@ class GenerationService:
     def submit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         provider = self._provider_for(payload)
         request_values = self._parse_request(payload, provider)
+        return self._submit(provider, request_values, on_progress, on_terminal)
+
+    def submit_video_edit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        """Create an immutable video-edit descendant from an owned output ID."""
+        provider = self._provider_for(payload)
+        if Capability.VIDEO_EDITING not in provider.facts.capabilities:
+            raise GenerationError("selected model does not support video editing")
+        request_values = self._parse_video_edit_request(payload, provider)
+        return self._submit(provider, request_values, on_progress, on_terminal)
+
+    def _submit(self, provider: Provider, request_values: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         output_paths: OutputPaths | None = None
         job_ready = __import__("threading").Event()
         job: Job | None = None
@@ -164,6 +176,58 @@ class GenerationService:
             "recipe": "Measured",
         }
 
+    def _parse_video_edit_request(self, payload: dict, provider: Provider) -> dict:
+        prompt = _required(payload, "prompt", str).strip()
+        if not prompt or len(prompt) > 4_000:
+            raise GenerationError("prompt must contain 1 to 4000 characters")
+        source_output_id = _required(payload, "source_output_id", str)
+        if not _OUTPUT_ID.fullmatch(source_output_id):
+            raise GenerationError("source output is invalid")
+        source_dir = self.paths.outputs / source_output_id
+        source_video = source_dir / "video.mp4"
+        metadata_path = source_dir / "metadata.json"
+        if not source_video.is_file() or not metadata_path.is_file():
+            raise GenerationError("source video is unavailable")
+        try:
+            source_metadata = json.loads(metadata_path.read_text())
+            source_request = source_metadata["request"]
+            if source_request.get("capability") not in {Capability.VIDEO_GENERATION.value, Capability.VIDEO_EDITING.value}:
+                raise ValueError()
+            width, height, frames, fps = (source_request[key] for key in ("width", "height", "frames", "fps"))
+            if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (width, height, frames, fps)):
+                raise ValueError()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise GenerationError("source video metadata is invalid") from error
+        change_amount = payload.get("change_amount")
+        if isinstance(change_amount, bool) or not isinstance(change_amount, (int, float)) or not 0.05 <= float(change_amount) <= 0.95:
+            raise GenerationError("change amount must be between 0.05 and 0.95")
+        recipe = payload.get("recipe", "Balanced")
+        if recipe not in {"Draft", "Balanced", "High"}:
+            raise GenerationError("recipe is not available")
+        try:
+            profile = provider.measured_recipes().recipes[recipe]
+        except (AttributeError, KeyError, ValueError, OSError, RuntimeError) as error:
+            raise GenerationError("requested recipe is not measured for video editing") from error
+        # Editing preserves the source's measured media facts; a profile with
+        # different dimensions or cadence would silently crop or retime it.
+        if (profile.width, profile.height, profile.frames, profile.fps) != (width, height, frames, fps):
+            raise GenerationError("source video does not match the selected measured edit recipe")
+        return {
+            "capability": Capability.VIDEO_EDITING,
+            "prompt": prompt,
+            "seed": _required(payload, "seed", int),
+            "width": width,
+            "height": height,
+            "frames": frames,
+            "fps": fps,
+            "steps": profile.steps,
+            "guidance_scale": profile.guidance_scale,
+            "recipe": recipe,
+            "source_video": source_video,
+            "source_output_id": source_output_id,
+            "change_amount": float(change_amount),
+        }
+
     def _on_progress(self, job: Job, fraction: float, text: str, callback: Callable[[Job], None]) -> None:
         self.jobs._progress(job, fraction, text)
         callback(self.jobs.status(job.job_id))
@@ -196,7 +260,8 @@ class GenerationService:
             "provider_revision": provider.facts.revision,
             "request": metadata_request,
             "result": result,
-            "lineage": [],
+            "lineage": ([{"output_id": request["source_output_id"], "relation": "edited_from"}]
+                        if request.get("source_output_id") else []),
         }
         (paths.partial_dir / "metadata.json").write_text(json.dumps(metadata, sort_keys=True, separators=(",", ":")))
 

@@ -71,7 +71,7 @@ class LtxMeasuredRecipes:
 class LtxProvider:
     facts = ProviderFacts(
         provider_id="ltx-video",
-        capabilities=frozenset({Capability.VIDEO_GENERATION}),
+        capabilities=frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}),
         profile="shareable",
         revision=REGISTRY["ltx-video"].revision,
         license_name=REGISTRY["ltx-video"].license_name,
@@ -102,7 +102,10 @@ class LtxProvider:
             raise LtxProviderError("generation settings are not in the measured LTX profile")
         if cancelled():
             raise InterruptedError("generation cancelled before model load")
-        pipeline = self._load(profile.dtype, image_to_video=request.source_image is not None)
+        is_edit = request.capability == Capability.VIDEO_EDITING
+        if is_edit and request.source_video is None:
+            raise LtxProviderError("video editing requires an owned source video")
+        pipeline = self._load(profile.dtype, image_to_video=request.source_image is not None, video_editing=is_edit)
         import torch
         from diffusers.utils import export_to_video
 
@@ -123,6 +126,10 @@ class LtxProvider:
             from PIL import Image
             with Image.open(request.source_image) as source:
                 arguments["image"] = source.convert("RGB").copy()
+        if is_edit:
+            # LTXConditionPipeline expects one sequence per requested video.
+            arguments["video"] = [self._preprocess_video(request.source_video, request.width, request.height, request.frames)]
+            arguments["denoise_strength"] = request.change_amount
         result = pipeline(**arguments)
         if cancelled():
             raise InterruptedError("generation cancelled")
@@ -130,8 +137,27 @@ class LtxProvider:
         export_to_video(result.frames[0], str(video_path), fps=request.fps)
         return {"media_file": "video.mp4", "native_fps": str(request.fps)}
 
-    def _load(self, dtype_name: str, image_to_video: bool = False):
-        if self._pipeline is not None and getattr(self._pipeline, "_synvid_i2v", False) == image_to_video:
+    @staticmethod
+    def _preprocess_video(source: Path, width: int, height: int, frames: int):
+        """Decode a bounded, normalized frame sequence without exposing paths."""
+        import imageio.v2 as imageio
+        from PIL import Image
+
+        reader = imageio.get_reader(str(source))
+        try:
+            normalized = []
+            for index, frame in enumerate(reader):
+                if index >= frames:
+                    break
+                normalized.append(Image.fromarray(frame).convert("RGB").resize((width, height), Image.Resampling.LANCZOS))
+        finally:
+            reader.close()
+        if len(normalized) != frames:
+            raise LtxProviderError("source video does not contain the measured frame count")
+        return normalized
+
+    def _load(self, dtype_name: str, image_to_video: bool = False, video_editing: bool = False):
+        if self._pipeline is not None and getattr(self._pipeline, "_synvid_i2v", False) == image_to_video and getattr(self._pipeline, "_synvid_v2v", False) == video_editing:
             return self._pipeline
         if self._pipeline is not None:
             self.unload()
@@ -144,18 +170,19 @@ class LtxProvider:
         except (OSError, ValueError, json.JSONDecodeError, ModelSecurityError) as error:
             raise LtxProviderError("LTX model is not a verified SynVid install") from error
         import torch
-        from diffusers import LTXImageToVideoPipeline, LTXPipeline
+        from diffusers import LTXConditionPipeline, LTXImageToVideoPipeline, LTXPipeline
 
         dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}.get(dtype_name)
         if dtype is None:
             raise LtxProviderError("measured LTX dtype is unsupported")
         # MPS CPU offload is deliberately not enabled: it is a CUDA-oriented
         # optimization and must not be assumed safe on Apple Silicon.
-        pipeline_type = LTXImageToVideoPipeline if image_to_video else LTXPipeline
+        pipeline_type = LTXConditionPipeline if video_editing else LTXImageToVideoPipeline if image_to_video else LTXPipeline
         self._pipeline = pipeline_type.from_pretrained(
             str(self._model_root), torch_dtype=dtype, local_files_only=True, trust_remote_code=False
         ).to("mps")
         self._pipeline._synvid_i2v = image_to_video
+        self._pipeline._synvid_v2v = video_editing
         # The sidecar reserves stdout for JSON-lines. Diffusers' progress bar
         # would otherwise corrupt the protocol during a real frozen-worker job.
         self._pipeline.set_progress_bar_config(disable=True)

@@ -132,6 +132,18 @@ for (const button of document.querySelectorAll("[data-export]")) button.addEvent
   catch (reason) { setError(String(reason)); }
   finally { button.disabled = false; }
 });
+$("#edit-video").addEventListener("click", () => { $("#video-edit-controls").hidden = !$("#video-edit-controls").hidden; });
+$("#change-amount").addEventListener("input", () => { $("#change-amount-value").textContent = $("#change-amount").value; });
+$("#apply-video-edit").addEventListener("click", async () => {
+  const prompt = $("#edit-prompt").value.trim(); const changeAmount = Number($("#change-amount").value);
+  if (!state.selectedVariant || !prompt) return setError("Describe the video change before applying the edit.");
+  if (state.modelId !== "ltx-video") return setError("Video editing is currently validated only for LTX Video.");
+  try {
+    const accepted = await invoke("edit_video", { request: { modelId: state.modelId, sourceOutputId: state.selectedVariant, prompt, seed: Number($("#seed").value), recipe: state.recipe, changeAmount } });
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading edit model", progress: 0 };
+    jobStatus.textContent = "Applying video edit…"; updateControls();
+  } catch (reason) { setError(String(reason)); }
+});
 $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });

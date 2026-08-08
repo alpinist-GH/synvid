@@ -32,6 +32,17 @@ struct GenerateRequest {
     source_image_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditVideoRequest {
+    model_id: String,
+    source_output_id: String,
+    prompt: String,
+    seed: i64,
+    recipe: String,
+    change_amount: f64,
+}
+
 fn response_payload(reply: Value) -> Result<Value, String> {
     match reply.get("kind").and_then(Value::as_str) {
         Some("error") => Err(reply
@@ -137,6 +148,33 @@ fn generate(
             .lock()
             .expect("worker supervisor lock poisoned")
             .request("generate", payload)?,
+    )
+}
+
+#[tauri::command]
+fn edit_video(
+    request: EditVideoRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if request.prompt.trim().is_empty()
+        || request.prompt.len() > 4_000
+        || request.source_output_id.len() != 36
+        || !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High")
+        || !(0.05..=0.95).contains(&request.change_amount)
+        || request.model_id != "ltx-video"
+    {
+        return Err("Invalid video edit request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "edit_video",
+                json!({"model_id": request.model_id, "source_output_id": request.source_output_id,
+            "prompt": request.prompt, "seed": request.seed, "recipe": request.recipe,
+            "change_amount": request.change_amount}),
+            )?,
     )
 }
 
@@ -286,6 +324,7 @@ pub fn run() {
             recovery_preview,
             recover,
             generate,
+            edit_video,
             export_video,
             choose_source_image,
             cancel

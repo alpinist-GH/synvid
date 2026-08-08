@@ -102,6 +102,18 @@ def serve() -> int:
 
                 job = service.submit(request.payload, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "edit_video":
+                def progress(job):
+                    _reply(request, "progress", service._job_payload(job))
+
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output:
+                        payload.update(output)
+                    _reply(request, "terminal", payload)
+
+                job = service.submit_video_edit(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "export_video":
                 output_id = request.payload.get("output_id")
                 profile = request.payload.get("profile")

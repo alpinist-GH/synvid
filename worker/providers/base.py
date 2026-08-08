@@ -44,6 +44,9 @@ class OperationRequest:
     guidance_scale: float
     recipe: str = "Balanced"
     source_image: Path | None = None
+    source_video: Path | None = None
+    source_output_id: str | None = None
+    change_amount: float | None = None
 
 
 class Provider(Protocol):
