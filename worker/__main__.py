@@ -11,6 +11,7 @@ from .protocol import Envelope, ProtocolError, negotiate_version, parse_envelope
 from .paths import AppPaths
 from .providers.ltx import LtxProvider
 from .providers.flux import FluxSchnellProvider
+from .providers.qwen_image_edit import QwenImageEditProvider
 from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
@@ -45,14 +46,19 @@ def _service() -> GenerationService:
         paths.models / "flux-schnell" / "snapshot",
         paths.models / "flux-schnell" / "measured-profile.json",
     )
+    qwen_image_edit = QwenImageEditProvider(
+        paths.models / "qwen-image-edit" / "snapshot",
+        paths.models / "qwen-image-edit" / "measured-profile.json",
+    )
     estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
     flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
+    qwen_image_edit_estimate = _measured_estimate(paths.models / "qwen-image-edit" / "measured-profile.json")
     return GenerationService(
         paths,
         ltx,
         estimate,
-        additional_providers=(flux,),
-        estimates={"flux-schnell": flux_estimate},
+        additional_providers=(flux, qwen_image_edit),
+        estimates={"flux-schnell": flux_estimate, "qwen-image-edit": qwen_image_edit_estimate},
         narrator=KokoroNarrator(paths.models / "kokoro-onnx" / "snapshot"),
     )
 
@@ -115,6 +121,18 @@ def serve() -> int:
                     _reply(request, "terminal", payload)
 
                 job = service.submit_video_edit(request.payload, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "edit_image":
+                def progress(job):
+                    _reply(request, "progress", service._job_payload(job))
+
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output:
+                        payload.update(output)
+                    _reply(request, "terminal", payload)
+
+                job = service.submit_image_edit(request.payload, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "narrate":
                 def progress(job):

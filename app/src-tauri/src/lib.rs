@@ -45,6 +45,15 @@ struct EditVideoRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct EditImageRequest {
+    model_id: String,
+    source_output_id: String,
+    prompt: String,
+    seed: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NarrateRequest {
     source_output_id: String,
     text: String,
@@ -181,6 +190,30 @@ fn edit_video(
                 json!({"model_id": request.model_id, "source_output_id": request.source_output_id,
             "prompt": request.prompt, "seed": request.seed, "recipe": request.recipe,
             "change_amount": request.change_amount}),
+            )?,
+    )
+}
+
+#[tauri::command]
+fn edit_image(
+    request: EditImageRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if request.prompt.trim().is_empty()
+        || request.prompt.len() > 4_000
+        || request.source_output_id.len() != 36
+        || request.model_id != "qwen-image-edit"
+    {
+        return Err("Invalid image edit request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "edit_image",
+                json!({"model_id": request.model_id, "source_output_id": request.source_output_id,
+                    "prompt": request.prompt, "seed": request.seed}),
             )?,
     )
 }
@@ -356,6 +389,7 @@ pub fn run() {
             recover,
             generate,
             edit_video,
+            edit_image,
             narrate,
             export_video,
             choose_source_image,

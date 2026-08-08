@@ -55,6 +55,15 @@
             <button type="button" data-export="balanced">Export Balanced</button>
             <button type="button" data-export="small">Export Small File</button>
           </div>
+          <section id="image-edit-controls" class="export-controls" hidden aria-labelledby="edit-image-title">
+            <h4 id="edit-image-title">Edit selected image</h4>
+            <label for="image-edit-model">Editing model</label>
+            <select id="image-edit-model"><option value="qwen-image-edit">Qwen Image Edit (Apache-2.0)</option></select>
+            <label for="image-edit-prompt">Describe the change</label>
+            <textarea id="image-edit-prompt" maxlength="4000" placeholder="Replace the cloudy sky with a warm sunset"></textarea>
+            <p class="field-help">The original remains immutable. This option appears only after Qwen Image Edit has a measured local MPS profile.</p>
+            <button id="apply-image-edit" type="button">Apply image edit</button>
+          </section>
           <section id="video-edit-controls" class="export-controls" hidden aria-labelledby="edit-video-title">
             <h4 id="edit-video-title">Edit selected video</h4>
             <label for="edit-prompt">Describe the change</label>

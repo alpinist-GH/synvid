@@ -177,3 +177,35 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(metadata["lineage"], [{"output_id": source_dir.name, "relation": "edited_from"}])
             self.assertEqual(provider.request.source_video, source_dir / "video.mp4")
             self.assertTrue((source_dir / "video.mp4").is_file())
+
+    def test_image_edit_creates_immutable_descendant_with_lineage(self):
+        class Profile:
+            width = height = 64
+            steps = 4
+            guidance_scale = 1.0
+
+        class EditingProvider(FakeProvider):
+            facts = ProviderFacts("fake-image-edit", frozenset({Capability.IMAGE_EDITING}), "shareable", "fixture-image-edit-v1", "test-only", False)
+            def measured_profile(self): return Profile()
+            def run(self, request, progress, cancelled):
+                self.request = request
+                (request.output_dir / "image.png").write_bytes(b"edited fixture image")
+                return {"media_file": "image.png", "media_type": "image/png"}
+
+        with tempfile.TemporaryDirectory() as temp:
+            provider = EditingProvider()
+            provider.facts = EditingProvider.facts
+            service = self._service(temp, provider)
+            source_dir = service.paths.outputs / "11111111-1111-1111-1111-111111111111"
+            source_dir.mkdir(parents=True)
+            (source_dir / "image.png").write_bytes(b"source image")
+            (source_dir / "metadata.json").write_text(json.dumps({"request": {"capability": "image_generation"}}))
+            terminal = threading.Event(); received = []
+            service.submit_image_edit({"model_id": "fake-image-edit", "prompt": "change it", "seed": 2, "source_output_id": source_dir.name}, lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()))
+            self.assertTrue(terminal.wait(2))
+            output_id = received[0][1]["output_id"]
+            metadata = json.loads((service.paths.outputs / output_id / "metadata.json").read_text())
+            self.assertEqual(metadata["request"]["capability"], "image_editing")
+            self.assertEqual(metadata["lineage"], [{"output_id": source_dir.name, "relation": "edited_from"}])
+            self.assertEqual(provider.request.source_image, source_dir / "image.png")
+            self.assertTrue((source_dir / "image.png").is_file())

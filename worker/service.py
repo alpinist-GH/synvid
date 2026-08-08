@@ -76,6 +76,14 @@ class GenerationService:
         request_values = self._parse_video_edit_request(payload, provider)
         return self._submit(provider, request_values, on_progress, on_terminal)
 
+    def submit_image_edit(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        """Create an immutable image-edit descendant from an owned image output."""
+        provider = self._provider_for(payload)
+        if Capability.IMAGE_EDITING not in provider.facts.capabilities:
+            raise GenerationError("selected model does not support image editing")
+        request_values = self._parse_image_edit_request(payload, provider)
+        return self._submit(provider, request_values, on_progress, on_terminal)
+
     def submit_narration(self, payload: dict, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         if self.narrator is None:
             raise GenerationError("narration is not available")
@@ -297,6 +305,43 @@ class GenerationService:
             "source_video": source_video,
             "source_output_id": source_output_id,
             "change_amount": float(change_amount),
+        }
+
+    def _parse_image_edit_request(self, payload: dict, provider: Provider) -> dict:
+        prompt = _required(payload, "prompt", str).strip()
+        if not prompt or len(prompt) > 4_000:
+            raise GenerationError("prompt must contain 1 to 4000 characters")
+        source_output_id = _required(payload, "source_output_id", str)
+        if not _OUTPUT_ID.fullmatch(source_output_id):
+            raise GenerationError("source output is invalid")
+        source_dir = self.paths.outputs / source_output_id
+        source_image = source_dir / "image.png"
+        metadata_path = source_dir / "metadata.json"
+        if not source_image.is_file() or not metadata_path.is_file():
+            raise GenerationError("source image is unavailable")
+        try:
+            metadata = json.loads(metadata_path.read_text())
+            if metadata["request"].get("capability") not in {Capability.IMAGE_GENERATION.value, Capability.IMAGE_EDITING.value}:
+                raise ValueError()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise GenerationError("source image metadata is invalid") from error
+        try:
+            profile = provider.measured_profile()
+        except (AttributeError, ValueError, OSError, RuntimeError) as error:
+            raise GenerationError("selected image editing settings are not measured") from error
+        return {
+            "capability": Capability.IMAGE_EDITING,
+            "prompt": prompt,
+            "seed": _required(payload, "seed", int),
+            "width": profile.width,
+            "height": profile.height,
+            "frames": 1,
+            "fps": 1,
+            "steps": profile.steps,
+            "guidance_scale": profile.guidance_scale,
+            "recipe": "Measured",
+            "source_image": source_image,
+            "source_output_id": source_output_id,
         }
 
     def _on_progress(self, job: Job, fraction: float, text: str, callback: Callable[[Job], None]) -> None:

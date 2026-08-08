@@ -73,6 +73,7 @@ function promoteVariant(variant) {
   const isVideo = variant.mediaFile === "video.mp4";
   $("#result-message").textContent = `Selected ${variant.outputId}. The canonical output remains immutable.`;
   $("#export-controls").hidden = !isVideo;
+  $("#image-edit-controls").hidden = variant.mediaFile !== "image.png";
   $("#video-edit-controls").hidden = true;
   $("#voice-controls").hidden = true;
   renderVariants();
@@ -149,6 +150,17 @@ $("#apply-video-edit").addEventListener("click", async () => {
     const accepted = await invoke("edit_video", { request: { modelId: state.modelId, sourceOutputId: state.selectedVariant, prompt, seed: Number($("#seed").value), recipe: state.recipe, changeAmount } });
     state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading edit model", progress: 0 };
     jobStatus.textContent = "Applying video edit…"; updateControls();
+  } catch (reason) { setError(String(reason)); }
+});
+$("#apply-image-edit").addEventListener("click", async () => {
+  const prompt = $("#image-edit-prompt").value.trim(); const modelId = $("#image-edit-model").value;
+  const model = state.models?.[modelId];
+  if (!state.selectedVariant || !prompt) return setError("Describe the image change before applying the edit.");
+  if (!model?.capabilities?.includes("image_editing") || !model?.measured_image_profile) return setError("Qwen Image Edit has not passed its measured local MPS gate.");
+  try {
+    const accepted = await invoke("edit_image", { request: { modelId, sourceOutputId: state.selectedVariant, prompt, seed: Number($("#seed").value) } });
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading image edit model", progress: 0 };
+    jobStatus.textContent = "Applying image edit…"; updateControls();
   } catch (reason) { setError(String(reason)); }
 });
 $("#generate-voice").addEventListener("click", async () => {

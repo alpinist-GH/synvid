@@ -325,9 +325,10 @@ v1 uses manual signed-DMG updates: installing a newer app must leave Application
   - Enforce the duration policy: pad shorter speech; reject overlong speech with a useful measured error; replace existing audio without changing video duration.
   - Measure TTS-plus-diffusion residency and choose unload behavior; disclose the TTS watermark and verify narration replacement by listening and with `ffprobe`. Export profiles and any interpolated FPS must preserve narration duration and A/V sync.
 - [ ] **Stage 6 — image editing, license-gated**
-  - Resolve the profile gate first: Kontext for a compliant personal/non-commercial profile, or a validated permissive replacement for the shareable profile.
+  - Profile decision recorded 2026-08-08: use `Qwen/Qwen-Image-Edit` at immutable revision `ac7f9318f633fc4b5778c59367c8128225f1e3de` for the shareable profile. Its Apache-2.0 license satisfies the profile gate, but its approximately 57.7 GB download and real MPS output remain mandatory acceptance gates; it is unavailable until that measurement is recorded. Kontext remains personal/research-only.
   - If Kontext is authorized, use the standard checkpoint only—never the fp8_scaled variant on MPS—and implement the `edit_image` IPC request, lineage metadata, and the image Edit panel.
   - Validate that the instruction visibly changes the output, the original remains immutable, and required license/safety disclosures are present.
+  - 2026-08-08 evidence: Qwen Image Edit passed the local MPS/output gate at 512x512, bf16, four steps. See `docs/measurements/stage6-qwen-image-edit-gate-2026-08-08.md`. Frozen-bundle end-to-end acceptance remains open.
 - [ ] **Stage 7 — Story Mode, editable multi-scene production**
   - Implement the versioned story/scene schema, optimistic revision checks, atomic saves, narrow dependency invalidation, multi-source lineage, and the Story workspace. Manual scene authoring, reorder, approval, storyboard-only rendering, and save/reopen must work before adding script generation.
   - Add scene-step variants and validated user replacement assets for still, clip, narration, and subtitles. Confirm promotion/replacement invalidates only dependent steps, imported originals remain immutable, and normalization produces traced derivatives.
