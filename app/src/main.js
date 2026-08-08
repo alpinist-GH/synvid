@@ -69,14 +69,20 @@ function renderVariants() {
   }
 }
 function promoteVariant(variant) {
-  state.selectedVariant = variant.outputId; $("#result-message").textContent = `Selected ${variant.outputId}. The canonical output remains immutable.`; $("#export-controls").hidden = false; renderVariants();
+  state.selectedVariant = variant.outputId;
+  const isVideo = variant.mediaFile === "video.mp4";
+  $("#result-message").textContent = `Selected ${variant.outputId}. The canonical output remains immutable.`;
+  $("#export-controls").hidden = !isVideo;
+  $("#video-edit-controls").hidden = true;
+  $("#voice-controls").hidden = true;
+  renderVariants();
 }
 function recordTerminal(events) {
   for (const event of events) {
     if (event.kind !== "terminal") continue;
     const payload = event.payload ?? {};
     if (payload.state === "succeeded" && payload.output_id && !state.variants.some((item) => item.outputId === payload.output_id)) {
-      const variant = { outputId: payload.output_id, seed: $("#seed").value };
+      const variant = { outputId: payload.output_id, seed: $("#seed").value, mediaFile: isImageModel() ? "image.png" : "video.mp4" };
       state.variants.unshift(variant); promoteVariant(variant); jobStatus.textContent = "Generation completed and saved atomically.";
     } else if (payload.state) jobStatus.textContent = payload.error || `Generation ${payload.state}.`;
   }
@@ -93,7 +99,7 @@ async function showLibrary() {
   const dialog = $("#library-dialog"); const list = $("#library-list"); list.replaceChildren();
   try {
     const { outputs = [] } = await invoke("list_outputs");
-    for (const output of outputs) { const item = document.createElement("li"); const button = document.createElement("button"); button.type = "button"; button.className = "variant"; button.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`; button.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown" }); dialog.close(); }); item.append(button); list.append(item); }
+    for (const output of outputs) { const item = document.createElement("li"); const button = document.createElement("button"); button.type = "button"; button.className = "variant"; button.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`; button.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown", mediaFile: output.media_file }); dialog.close(); }); item.append(button); list.append(item); }
     if (!outputs.length) list.textContent = "No completed local outputs yet.";
   } catch { list.textContent = "The local library is unavailable while the worker is disconnected."; }
   dialog.showModal();

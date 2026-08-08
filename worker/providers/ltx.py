@@ -126,35 +126,103 @@ class LtxProvider:
             from PIL import Image
             with Image.open(request.source_image) as source:
                 arguments["image"] = source.convert("RGB").copy()
+        preprocessing: dict[str, object] | None = None
         if is_edit:
             # LTXConditionPipeline expects one sequence per requested video.
-            arguments["video"] = [self._preprocess_video(request.source_video, request.width, request.height, request.frames)]
+            frames, preprocessing = self._preprocess_video(
+                request.source_video, request.width, request.height, request.frames, request.fps,
+                request.change_amount, cancelled,
+            )
+            arguments["video"] = [frames]
+            # The condition pipeline defaults to a strength of 1.0, which
+            # hard-preserves every supplied source frame.  Pair source
+            # conditioning with denoising so this single UI control has the
+            # promised preserve-versus-change behavior at both ends.
+            arguments["strength"] = 1.0 - request.change_amount
             arguments["denoise_strength"] = request.change_amount
         result = pipeline(**arguments)
         if cancelled():
             raise InterruptedError("generation cancelled")
         video_path = request.output_dir / "video.mp4"
         export_to_video(result.frames[0], str(video_path), fps=request.fps)
-        return {"media_file": "video.mp4", "native_fps": str(request.fps)}
+        result: dict[str, object] = {"media_file": "video.mp4", "native_fps": str(request.fps)}
+        if preprocessing is not None:
+            result["preprocessing"] = preprocessing
+        return result
 
     @staticmethod
-    def _preprocess_video(source: Path, width: int, height: int, frames: int):
-        """Decode a bounded, normalized frame sequence without exposing paths."""
+    def _preprocess_video(
+        source: Path, width: int, height: int, frames: int, fps: int, change_amount: float | None,
+        cancelled: Callable[[], bool],
+    ) -> tuple[list, dict[str, object]]:
+        """Decode one exact owned sequence and record its deterministic transform."""
         import imageio.v2 as imageio
         from PIL import Image
 
         reader = imageio.get_reader(str(source))
         try:
+            metadata = reader.get_meta_data()
+            source_fps = metadata.get("fps")
+            if isinstance(source_fps, bool) or not isinstance(source_fps, (int, float)) or source_fps <= 0:
+                raise LtxProviderError("source video has no usable frame rate")
             normalized = []
+            source_size: tuple[int, int] | None = None
             for index, frame in enumerate(reader):
+                if cancelled():
+                    raise InterruptedError("generation cancelled during source preprocessing")
+                # V1 deliberately accepts only the exact measured sequence,
+                # rather than silently discarding an unbounded source clip.
                 if index >= frames:
-                    break
-                normalized.append(Image.fromarray(frame).convert("RGB").resize((width, height), Image.Resampling.LANCZOS))
+                    raise LtxProviderError("source video exceeds the measured frame count")
+                image = Image.fromarray(frame).convert("RGB")
+                if source_size is None:
+                    source_size = image.size
+                elif image.size != source_size:
+                    raise LtxProviderError("source video frames have inconsistent dimensions")
+                normalized.append(LtxProvider._resize_center_crop(image, width, height))
         finally:
             reader.close()
         if len(normalized) != frames:
             raise LtxProviderError("source video does not contain the measured frame count")
-        return normalized
+        assert source_size is not None
+        source_width, source_height = source_size
+        policy = "identity" if source_size == (width, height) else "center_crop_then_lanczos_resize"
+        return normalized, {
+            "source": {
+                "decoded_fps": float(source_fps),
+                "decoded_duration_seconds": len(normalized) / float(source_fps),
+                "decoded_width": source_width,
+                "decoded_height": source_height,
+                "decoded_frames": len(normalized),
+            },
+            "target": {
+                "fps": fps,
+                "duration_seconds": frames / fps,
+                "width": width,
+                "height": height,
+                "frames": frames,
+            },
+            "resize_crop_policy": policy,
+            "source_conditioning_strength": 1.0 - change_amount if change_amount is not None else None,
+        }
+
+    @staticmethod
+    def _resize_center_crop(image, width: int, height: int):
+        """Preserve aspect ratio before a deterministic high-quality resize."""
+        from PIL import Image
+
+        source_width, source_height = image.size
+        source_ratio = source_width / source_height
+        target_ratio = width / height
+        if source_ratio > target_ratio:
+            crop_width = round(source_height * target_ratio)
+            left = (source_width - crop_width) // 2
+            image = image.crop((left, 0, left + crop_width, source_height))
+        elif source_ratio < target_ratio:
+            crop_height = round(source_width / target_ratio)
+            top = (source_height - crop_height) // 2
+            image = image.crop((0, top, source_width, top + crop_height))
+        return image.resize((width, height), Image.Resampling.LANCZOS)
 
     def _load(self, dtype_name: str, image_to_video: bool = False, video_editing: bool = False):
         if self._pipeline is not None and getattr(self._pipeline, "_synvid_i2v", False) == image_to_video and getattr(self._pipeline, "_synvid_v2v", False) == video_editing:
@@ -181,6 +249,12 @@ class LtxProvider:
         self._pipeline = pipeline_type.from_pretrained(
             str(self._model_root), torch_dtype=dtype, local_files_only=True, trust_remote_code=False
         ).to("mps")
+        if video_editing and self._pipeline.scheduler.config.get("use_dynamic_shifting", False):
+            # Diffusers 0.39's LTXConditionPipeline does not calculate and
+            # pass the required `mu` value to its dynamic-shift scheduler (the
+            # text-to-video pipeline does).  Use its pinned static shift until
+            # a measured upgrade supplies the condition-pipeline equivalent.
+            self._pipeline.scheduler.register_to_config(use_dynamic_shifting=False)
         self._pipeline._synvid_i2v = image_to_video
         self._pipeline._synvid_v2v = video_editing
         # The sidecar reserves stdout for JSON-lines. Diffusers' progress bar

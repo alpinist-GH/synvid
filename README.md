@@ -16,8 +16,8 @@ Stage 5's implementation introduces an explicit local narration descendant:
 selected video's audio without altering the source. The video timeline is
 authoritative: short speech is padded with silence, while an overlong script
 is rejected rather than time-stretched or silently cut off. Kokoro uses a stock
-voice; it does not clone a person. Its ONNX runtime avoids the incompatible
-Chatterbox dependency stack. Its model must be explicitly installed
+voice; it does not clone a person. Its ONNX runtime keeps the narration
+dependency footprint small. Its model must be explicitly installed
 into SynVid's own Application Support model root; SynVid never searches or
 reuses another application's cache.
 
