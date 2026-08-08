@@ -126,10 +126,11 @@ has separate High/Balanced/Small File H.264 exports that preserve its 256×256,
 
 The local app build uses `scripts/build-local-app.sh`: Tauri's normal resource
 copy omits nested PyInstaller framework/symlink files, so the script restores
-the one-folder worker with `ditto`. A copied, relocated `.app` then completed a
-real frozen-worker text-to-video render with Homebrew removed from `PATH`.
-Real LTX image-to-video was also inspected from a locally selected flower
-frame. The UI's visible accessibility review and forced worker-crash/restart
-exercise are still manual acceptance gates; Stage 2 remains open until those
-installed-app checks are recorded. DMG construction is a Stage 8 signing/release
-task.
+the one-folder worker with `ditto` and then creates `dist/SynVid-0.1.0-unsigned.dmg`.
+A copied, relocated `.app` then completed a real frozen-worker text-to-video
+render with Homebrew removed from `PATH`. Real LTX image-to-video was also
+inspected from a locally selected flower frame. The UI's visible accessibility
+review and forced worker-crash/restart exercise are still manual acceptance
+gates; Stage 2 remains open until those installed-app checks are recorded. The
+local DMG is not signed, notarized, or a release artifact; those Stage 8 steps
+remain separately gated.
