@@ -39,8 +39,10 @@ test("library deletion reports its result inside the open dialog", () => {
   assert.match(source, /Could not refresh the Library:/);
 });
 
-test("experimental Wan 2.2 is selectable for measured text-to-video testing", () => {
-  assert.match(markup, /value="wan2\.2-ti2v-5b"/);
+test("experimental Wan models are selectable for local testing", () => {
+  for (const modelId of ["wan2.1-1.3b", "wan2.1-14b", "wan2.2-ti2v-5b"]) {
+    assert.match(markup, new RegExp(`value="${modelId.replace(/\./g, "\\.")}"`));
+  }
   assert.match(source, /Ready for experimental Wan 2\.2 testing/);
-  assert.match(source, /wanTextOnly/);
+  assert.match(source, /modes\.includes\("text"\)/);
 });

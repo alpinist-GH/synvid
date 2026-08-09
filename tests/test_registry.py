@@ -20,6 +20,14 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(spec.requires_access_confirmation)
         self.assertIn("MPS", spec.reason)
 
+    def test_wan21_variants_are_exposed_text_to_video_only(self):
+        for model_id in ("wan2.1-1.3b", "wan2.1-14b"):
+            spec = REGISTRY[model_id]
+            self.assertIn(Capability.VIDEO_GENERATION, spec.capabilities)
+            self.assertEqual(spec.supported_modes, frozenset({"text"}))
+            self.assertFalse(spec.requires_access_confirmation)
+            self.assertIn("no measured profile exists on this Mac yet", spec.reason)
+
     def test_hunyuan15_has_pinned_personal_t2v_and_i2v_entries(self):
         t2v = REGISTRY["hunyuan15-480p-t2v"]
         i2v = REGISTRY["hunyuan15-480p-i2v"]
