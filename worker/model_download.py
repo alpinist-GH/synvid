@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fnmatch
-import os
 from pathlib import Path
 from typing import Callable
 
@@ -16,9 +15,9 @@ from .paths import AppPaths
 
 def download_model(paths: AppPaths, spec: ModelSpec, progress: Callable[[float, str], None], cancelled: Callable[[], bool]) -> dict[str, object]:
     """Fetch only reviewed files at a pinned revision, then atomically verify/promote."""
-    token = os.environ.get("SYNVID_HF_TOKEN")
-    if spec.requires_access_confirmation and not token:
-        raise ModelInstallError("This model requires an approved Hugging Face credential in Keychain.")
+    # Downloads begin anonymously. SynVid does not require, request, or read
+    # a Hugging Face API token merely to open or use the application.
+    token = None
     progress(0.02, "Checking pinned model manifest")
     api = HfApi(token=token)
     remote = []

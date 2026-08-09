@@ -33,7 +33,7 @@
         <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
 
         <section class="generation-guide" aria-labelledby="generation-guide-title">
-          <div><h3 id="generation-guide-title">Create a video in 3 steps</h3><button id="show-generation-guide" class="text-button" type="button">Show guide</button></div>
+          <div><h3 id="generation-guide-title">Create a video in 3 steps</h3><button id="start-walkthrough" class="text-button" type="button">Start walkthrough</button></div>
           <ol><li><strong>Describe it</strong><span>Write what you want to see.</span></li><li><strong>Choose a recipe</strong><span>Balanced is the recommended starting point.</span></li><li><strong>Generate and review</strong><span>Play the result, then keep, export, or try another variant.</span></li></ol>
         </section>
 
@@ -139,6 +139,13 @@
       <p>The initial LTX profile is constrained to combinations measured on this Mac. No media has been rendered while this page is open.</p>
       <form method="dialog"><button id="complete-onboarding" class="generate" value="continue" type="submit">Continue to SynVid</button></form>
     </dialog>
+    <dialog id="required-model-dialog" aria-labelledby="required-model-title">
+      <h2 id="required-model-title">Set up SynVid</h2>
+      <p id="required-model-copy">Checking the required local video model…</p>
+      <p id="required-model-facts" class="field-help"></p>
+      <p class="field-help">The download starts only if you choose Download and validate. SynVid verifies the files, then checks a real local render before enabling generation.</p>
+      <div class="dialog-actions"><button id="download-required-model" class="generate" type="button">Download and validate</button><button id="required-model-not-now" class="secondary" type="button">Not now</button></div>
+    </dialog>
     <dialog id="recovery-dialog" aria-labelledby="recovery-title">
       <h2 id="recovery-title">Recovery Center</h2>
       <p id="recovery-preview">Checking recoverable state…</p>
@@ -151,14 +158,16 @@
       <ol id="library-list" class="variant-list"></ol>
       <button class="secondary close-dialog" type="button">Close</button>
     </dialog>
-    <dialog id="generation-guide-dialog" aria-labelledby="generation-guide-dialog-title">
-      <h2 id="generation-guide-dialog-title">Your first SynVid generation</h2>
-      <ol class="guide-steps"><li><strong>Describe the motion.</strong> Include a subject, action, setting, and style: “A yellow flower gently sways in a spring breeze, close-up, soft morning light.”</li><li><strong>Pick how you begin.</strong> Use Text to video for an idea from words, or Image to video to animate an image you choose.</li><li><strong>Start with Balanced.</strong> It is the measured local recipe. Draft is for faster experiments; High takes longer.</li><li><strong>Generate, then review.</strong> Progress remains visible while SynVid works. Completed videos are saved locally in Library, where you can reopen, export, or delete them.</li></ol>
-      <button class="secondary close-dialog" type="button">Got it</button>
-    </dialog>
+    <section id="walkthrough" class="walkthrough" hidden aria-live="polite" aria-labelledby="walkthrough-title">
+      <p id="walkthrough-progress" class="eyebrow"></p>
+      <h2 id="walkthrough-title"></h2>
+      <p id="walkthrough-copy"></p>
+      <div class="walkthrough-actions"><button id="walkthrough-back" type="button">Back</button><button id="walkthrough-next" class="generate" type="button">Next</button></div>
+      <button id="walkthrough-close" class="text-button" type="button">Exit walkthrough</button>
+    </section>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>
-      <p class="field-help">Models are stored only in SynVid Application Support. Downloads always require a separate license, size, and revision confirmation.</p>
+      <p class="field-help">Models are stored only in SynVid Application Support. SynVid starts without a Hugging Face account or API token. Downloads always require a separate license, size, and revision confirmation.</p>
       <section aria-labelledby="models-title"><h3 id="models-title">Local AI models</h3><div id="model-list" class="model-list" aria-live="polite">Loading model catalog…</div></section>
       <section class="temporary-cleanup" aria-labelledby="temporary-title">
         <h3 id="temporary-title">Temporary files</h3>

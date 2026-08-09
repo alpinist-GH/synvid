@@ -11,10 +11,6 @@ default-run = "synvid"
 name = "synvid"
 path = "src/main.rs"
 
-[[example]]
-name = "synvid-keychain"
-path = "tools/synvid-keychain.rs"
-
 [lib]
 name = "synvid_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -28,4 +24,3 @@ serde_json = "1"
 tauri = { version = "2", features = ["protocol-asset"] }
 thiserror = "2"
 rfd = "0.16"
-security-framework = "3"

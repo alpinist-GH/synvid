@@ -7,11 +7,24 @@ const convertFileSrc = window.__TAURI__.core.convertFileSrc;
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
+const WALKTHROUGH_STEPS = [
+  { target: "#prompt", title: "1. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
+  { target: "[data-mode=\"text\"]", title: "2. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
+  { target: "#model", title: "3. Pick a model", copy: "Choose the kind of result you need. LTX Video makes video; FLUX.1-schnell makes a still image. If a model is missing, Set up a local model opens Settings with its size, license, and fixed revision before any download." },
+  { target: "#recipe-buttons", title: "4. Select a measured recipe", copy: "Balanced is the recommended starting point. Recipes are available only when they have passed a local measurement on this Mac, so the app does not promise unsupported quality or speed." },
+  { target: "#seed", title: "5. Control variations", copy: "Keep a seed to make a comparable variation, or use Randomize for a new one. Undo and Redo restore recent prompt, seed, and recipe changes." },
+  { target: "#generate", title: "6. Generate locally", copy: "Generate starts the selected measured model. Progress and Cancel stay here while it runs. No model download or render begins until you explicitly press a button." },
+  { target: "#variant-list", title: "7. Review and refine", copy: "Each finished output appears in Variants. Select one to preview it, export it, or use Edit video, Add Voice, or image editing when those tools are available." },
+  { target: "#library-button", title: "8. Keep or clean up", copy: "Library reopens or deletes completed local work. Settings manages downloaded models and temporary files. Recovery Center only removes incomplete temporary work, never finished outputs." },
+];
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
 const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
+let walkthroughIndex = 0;
+let requiredModelSetupChecked = false;
+let requiredModel = null;
 const $ = (selector) => document.querySelector(selector);
 const connection = $("#connection");
 const jobStatus = $("#job-status");
@@ -22,6 +35,26 @@ const error = $("#form-error");
 const generationProgress = $("#generation-progress");
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
+function stopWalkthrough() {
+  document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
+  $("#walkthrough").hidden = true;
+}
+function renderWalkthrough() {
+  const step = WALKTHROUGH_STEPS[walkthroughIndex];
+  const target = document.querySelector(step.target);
+  document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
+  if (target) {
+    target.classList.add("walkthrough-target");
+    target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  }
+  $("#walkthrough").hidden = false;
+  $("#walkthrough-progress").textContent = "WALKTHROUGH · " + (walkthroughIndex + 1) + " OF " + WALKTHROUGH_STEPS.length;
+  $("#walkthrough-title").textContent = step.title;
+  $("#walkthrough-copy").textContent = step.copy;
+  $("#walkthrough-back").disabled = walkthroughIndex === 0;
+  $("#walkthrough-next").textContent = walkthroughIndex === WALKTHROUGH_STEPS.length - 1 ? "Finish" : "Next";
+}
+function startWalkthrough() { walkthroughIndex = 0; renderWalkthrough(); }
 function renderGenerationProgress(job) {
   generationProgress.hidden = !job;
   generationProgress.value = job ? Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100) : 0;
@@ -137,8 +170,43 @@ async function refresh() {
     const status = await invoke("worker_status"); state.connected = status.connected; state.models = status.availableModels; state.recipes = status.measuredRecipes; state.activeJob = status.activeJob;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
     if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
-    recordTerminal(status.events || []); updateControls();
+    recordTerminal(status.events || []); updateControls(); void maybeShowRequiredModelSetup();
   } catch { state.connected = false; connection.textContent = "Worker unavailable"; updateControls(); }
+}
+async function maybeShowRequiredModelSetup() {
+  if (requiredModelSetupChecked || !state.connected || activeProfile() || $("#onboarding").open) return;
+  requiredModelSetupChecked = true;
+  try {
+    const response = await invoke("model_catalog");
+    requiredModel = (response.models || []).find((model) => model.model_id === "ltx-video") || null;
+    if (!requiredModel) return;
+    $("#required-model-copy").textContent = requiredModel.installed
+      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Generation remains disabled until it is validated."
+      : "LTX Video is required before SynVid can create video on this Mac.";
+    $("#required-model-facts").textContent = "Model: " + requiredModel.display_name + " · " + requiredModel.expected_size_gib + " GB expected · " + requiredModel.license + " · revision " + requiredModel.revision;
+    $("#download-required-model").hidden = Boolean(requiredModel.installed);
+    if (!$("#required-model-dialog").open) $("#required-model-dialog").showModal();
+  } catch {
+    requiredModelSetupChecked = false;
+  }
+}
+async function downloadRequiredModel() {
+  if (!requiredModel) return;
+  const button = $("#download-required-model");
+  const access = requiredModel.requires_access_confirmation ? " The publisher may require separate access approval." : "";
+  const approved = window.confirm("Download " + requiredModel.display_name + "?\n\nRevision: " + requiredModel.revision + "\nExpected size: " + requiredModel.expected_size_gib + " GB\nLicense: " + requiredModel.license + "." + access + "\n\nSynVid will begin the network transfer only after you confirm.");
+  if (!approved) return;
+  button.disabled = true;
+  try {
+    const accepted = await invoke("download_model", { modelId: requiredModel.model_id });
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Downloading " + requiredModel.display_name, progress: 0 };
+    jobStatus.textContent = "Downloading " + requiredModel.display_name + "…";
+    $("#required-model-dialog").close();
+    updateControls();
+  } catch (reason) {
+    setError(String(reason));
+    button.disabled = false;
+  }
 }
 async function showLibrary() {
   const dialog = $("#library-dialog"); const list = $("#library-list"); list.replaceChildren();
@@ -204,7 +272,7 @@ function renderModelCatalog(models) {
       item.append(remove);
     } else {
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download model…";
-      download.addEventListener("click", () => {
+      download.addEventListener("click", async () => {
         const access = model.requires_access_confirmation ? " Access approval is required." : "";
         const approved = window.confirm(`Download ${model.display_name}?\n\nRevision: ${model.revision}\nExpected size: ${model.expected_size_gib} GB\nLicense: ${model.license}.${access}\n\nSynVid will request a final authorization before any network transfer.`);
         if (!approved) return;
@@ -263,8 +331,13 @@ async function showStory() {
 
 restoreDraft();
 if (!localStorage.getItem(ONBOARDING_KEY)) $("#onboarding").showModal();
-$("#complete-onboarding").addEventListener("click", () => localStorage.setItem(ONBOARDING_KEY, "complete"));
-$("#show-generation-guide").addEventListener("click", () => $("#generation-guide-dialog").showModal());
+$("#complete-onboarding").addEventListener("click", () => { localStorage.setItem(ONBOARDING_KEY, "complete"); void maybeShowRequiredModelSetup(); });
+$("#download-required-model").addEventListener("click", () => void downloadRequiredModel());
+$("#required-model-not-now").addEventListener("click", () => $("#required-model-dialog").close());
+$("#start-walkthrough").addEventListener("click", startWalkthrough);
+$("#walkthrough-back").addEventListener("click", () => { if (walkthroughIndex > 0) { walkthroughIndex -= 1; renderWalkthrough(); } });
+$("#walkthrough-next").addEventListener("click", () => { if (walkthroughIndex === WALKTHROUGH_STEPS.length - 1) stopWalkthrough(); else { walkthroughIndex += 1; renderWalkthrough(); } });
+$("#walkthrough-close").addEventListener("click", stopWalkthrough);
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });

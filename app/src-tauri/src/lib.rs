@@ -6,7 +6,6 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
-pub mod credentials;
 mod worker;
 use worker::{SupervisorState, WorkerSupervisor};
 
@@ -182,13 +181,6 @@ fn response_payload(reply: Value) -> Result<Value, String> {
             .cloned()
             .ok_or("worker response had no payload".into()),
     }
-}
-
-/// Reports only whether a gated-model credential is available.  The token
-/// itself remains in macOS Keychain and is never serialised into Tauri IPC.
-#[tauri::command]
-fn hugging_face_credential_status() -> Value {
-    json!({"available": credentials::hugging_face_token().is_ok()})
 }
 
 /// This intentionally exposes no process, filesystem, or shell command to the webview.
@@ -1083,7 +1075,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            hugging_face_credential_status,
             worker_status,
             list_outputs,
             delete_output,
