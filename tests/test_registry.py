@@ -19,3 +19,18 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(spec.repository, "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
         self.assertFalse(spec.requires_access_confirmation)
         self.assertIn("MPS", spec.reason)
+
+    def test_hunyuan15_has_pinned_personal_t2v_and_i2v_entries(self):
+        t2v = REGISTRY["hunyuan15-480p-t2v"]
+        i2v = REGISTRY["hunyuan15-480p-i2v"]
+        self.assertEqual(t2v.repository, "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v")
+        self.assertEqual(t2v.revision, "286be7ce72277246578a3e3cc2487e95ddae5bcf")
+        self.assertEqual(t2v.expected_size_gib, 53.4)
+        self.assertEqual(t2v.supported_modes, frozenset({"text"}))
+        self.assertEqual(i2v.repository, "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v")
+        self.assertEqual(i2v.revision, "5a700ee883ff4c1b3d887ec4188755a7a5e2f698")
+        self.assertEqual(i2v.expected_size_gib, 54.2)
+        self.assertEqual(i2v.supported_modes, frozenset({"image"}))
+        self.assertEqual(t2v.profile, i2v.profile, "territory-restricted models must not enter the shareable profile")
+        self.assertIn("territory-restricted", t2v.license_name)
+        self.assertTrue(t2v.requires_access_confirmation and i2v.requires_access_confirmation)

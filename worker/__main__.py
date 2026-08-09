@@ -13,6 +13,8 @@ from .providers.ltx import LtxProvider
 from .providers.flux import FluxSchnellProvider
 from .providers.qwen_image_edit import QwenImageEditProvider
 from .providers.wan import WanT2VProvider
+from .providers.hunyuan import HunyuanVideo15Provider
+from .models import REGISTRY
 from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
@@ -59,16 +61,34 @@ def _service() -> GenerationService:
         paths.models / "wan2.2-ti2v-5b" / "measured-profile.json",
         model_id="wan2.2-ti2v-5b",
     )
+    hunyuan_t2v = HunyuanVideo15Provider(
+        paths.models / "hunyuan15-480p-t2v" / "snapshot",
+        paths.models / "hunyuan15-480p-t2v" / "measured-profile.json",
+        model_id="hunyuan15-480p-t2v",
+    )
+    hunyuan_i2v = HunyuanVideo15Provider(
+        paths.models / "hunyuan15-480p-i2v" / "snapshot",
+        paths.models / "hunyuan15-480p-i2v" / "measured-profile.json",
+        model_id="hunyuan15-480p-i2v",
+    )
     estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
     flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
     qwen_image_edit_estimate = _measured_estimate(paths.models / "qwen-image-edit" / "measured-profile.json")
     wan22_estimate = _measured_estimate(paths.models / "wan2.2-ti2v-5b" / "measured-profile.json")
+    hunyuan_t2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-t2v" / "measured-profile.json", "hunyuan15-480p-t2v")
+    hunyuan_i2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-i2v" / "measured-profile.json", "hunyuan15-480p-i2v")
     return GenerationService(
         paths,
         ltx,
         estimate,
-        additional_providers=(flux, qwen_image_edit, wan22),
-        estimates={"flux-schnell": flux_estimate, "qwen-image-edit": qwen_image_edit_estimate, "wan2.2-ti2v-5b": wan22_estimate},
+        additional_providers=(flux, qwen_image_edit, wan22, hunyuan_t2v, hunyuan_i2v),
+        estimates={
+            "flux-schnell": flux_estimate,
+            "qwen-image-edit": qwen_image_edit_estimate,
+            "wan2.2-ti2v-5b": wan22_estimate,
+            "hunyuan15-480p-t2v": hunyuan_t2v_estimate,
+            "hunyuan15-480p-i2v": hunyuan_i2v_estimate,
+        },
         narrator=KokoroNarrator(paths.models / "kokoro-onnx" / "snapshot"),
     )
 
@@ -86,6 +106,15 @@ def _measured_estimate(profile: Path) -> Estimate:
     # This estimate remains deliberately unavailable until smoke_test writes a
     # real measurement.  Generation is rejected rather than guessing disk use.
     return estimate
+
+
+def _hunyuan_estimate(profile: Path, model_id: str) -> Estimate:
+    estimate = _measured_estimate(profile)
+    if estimate.is_measured:
+        return estimate
+    # The checkpoint size is known from the pinned Hugging Face snapshot. The
+    # generation memory estimate remains intentionally unmeasured.
+    return Estimate(int(REGISTRY[model_id].expected_size_gib * 1024**3), True)
 
 
 def serve() -> int:

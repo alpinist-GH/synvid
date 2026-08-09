@@ -31,6 +31,14 @@ struct GenerateRequest {
     source_image_id: Option<String>,
 }
 
+const ENABLED_GENERATION_MODELS: &[&str] = &[
+    "ltx-video",
+    "flux-schnell",
+    "wan2.2-ti2v-5b",
+    "hunyuan15-480p-t2v",
+    "hunyuan15-480p-i2v",
+];
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EditVideoRequest {
@@ -259,7 +267,7 @@ fn generate(
     if !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High") {
         return Err("Generation recipe is not available.".into());
     }
-    if !matches!(request.model_id.as_str(), "ltx-video" | "flux-schnell") {
+    if !ENABLED_GENERATION_MODELS.contains(&request.model_id.as_str()) {
         return Err("Selected model is not available.".into());
     }
     let payload = json!({

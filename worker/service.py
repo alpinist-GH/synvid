@@ -237,6 +237,11 @@ class GenerationService:
             "recipe": recipe,
         }
         source_image_id = payload.get("source_image_id")
+        supported_modes = getattr(getattr(provider, "spec", None), "supported_modes", frozenset({"text", "image"}))
+        if source_image_id is None and "text" not in supported_modes:
+            raise GenerationError("selected model requires an image-to-video source")
+        if source_image_id is not None and "image" not in supported_modes:
+            raise GenerationError("selected model supports text-to-video only")
         if source_image_id is not None:
             if not isinstance(source_image_id, str) or not _SOURCE_IMAGE_ID.fullmatch(source_image_id):
                 raise GenerationError("source image is invalid")
@@ -418,6 +423,8 @@ class GenerationService:
             recipes, image = self._measured_profiles(provider) if provider else (None, None)
             available_models[model_id] = {
                 "capabilities": [capability.value for capability in (spec.capabilities if spec else provider.facts.capabilities)],
+                "modes": sorted(spec.supported_modes) if spec else ["text", "image"],
+                "installed": self._model_status(model_id)["installed"] if spec else True,
                 "measured_recipes": recipes,
                 "measured_image_profile": image,
                 "reason": spec.reason if spec else "Runtime test provider.",
@@ -558,6 +565,7 @@ class GenerationService:
             "profile": spec.profile,
             "expected_size_gib": spec.expected_size_gib,
             "requires_access_confirmation": spec.requires_access_confirmation,
+            "modes": sorted(spec.supported_modes),
             "installed": installed,
             "installed_bytes": self._tree_size(root) if installed else 0,
         }
@@ -595,6 +603,7 @@ class GenerationService:
                     "width": profile.width, "height": profile.height,
                     "frames": profile.frames, "fps": profile.fps,
                     "steps": profile.steps, "guidance_scale": profile.guidance_scale,
+                    "test_only": bool(getattr(profile, "test_only", False)),
                 }
                 for name, profile in measured.items()
             }

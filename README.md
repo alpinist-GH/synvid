@@ -55,6 +55,18 @@ reviewed repository and exact commit, force `trust_remote_code=False`, allow
 only reviewed Diffusers data/Safetensors files, and verify a complete SHA-256
 manifest sourced from Hugging Face LFS metadata at that commit.
 
+HunyuanVideo 1.5 is registered as an opt-in experimental personal/research
+provider with separate pinned 480p T2V and I2V snapshots. The T2V snapshot is
+53.4 GiB and the I2V snapshot is 54.2 GiB. Both remain unavailable until each
+passes a real Apple-MPS output, memory, cancellation, and relocated-worker
+gate. The Tencent Hunyuan Community License excludes the EU, UK, and South
+Korea, so Hunyuan is not part of the shareable profile.
+
+For local testing, both entries expose an explicitly marked unmeasured
+480p test profile: 848×480, 121 frames, 24 FPS, 50 steps, and BF16. The test
+profile enables generation only after the corresponding checkpoint is
+installed; it is not a performance or stability promise.
+
 ## Stage 0 evidence
 
 The versioned JSON-lines protocol, fake-provider lifecycle seam, immutable

@@ -117,17 +117,23 @@ function setRecipe(recipe) {
   state.recipe = recipe;
   for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === recipe));
   const profile = activeProfile();
-  $("#recipe-note").textContent = profile ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.` : `${recipe} has not been measured on this Mac.`;
+  $("#recipe-note").textContent = profile
+    ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; ${profile.test_only ? "experimental test profile, not measured on this Mac." : "measured on this Mac."}`
+    : `${recipe} has not been measured on this Mac.`;
   $("#advanced-note").textContent = "Custom overrides are unavailable: only the measured recipe map may be submitted.";
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
 function updateControls() {
-  const profile = activeProfile(); const available = state.connected && profile && !state.activeJob;
+  const model = selectedModel(); const profile = activeProfile();
+  const installed = Boolean(model?.installed);
+  const available = state.connected && profile && installed && !state.activeJob;
   generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
-  setupModelButton.hidden = !state.connected || Boolean(profile) || Boolean(state.activeJob);
+  setupModelButton.hidden = !state.connected || (installed && Boolean(profile)) || Boolean(state.activeJob);
   if (!state.activeJob) {
     if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
+    else if (!installed) jobStatus.textContent = "Install the selected local model before generating.";
     else if (!profile) jobStatus.textContent = selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.";
+    else if (profile.test_only) jobStatus.textContent = "Experimental test profile ready. Results are not yet validated on this Mac.";
     else if (state.modelId === "wan2.2-ti2v-5b") jobStatus.textContent = "Ready for experimental Wan 2.2 testing. The measured output has not passed the quality gate.";
     else jobStatus.textContent = "Ready to generate locally.";
   }
@@ -135,10 +141,21 @@ function updateControls() {
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
   $("#fps").textContent = profile && !isImageModel() ? `${profile.fps} FPS (Native)` : "—";
   generateButton.textContent = isImageModel() ? "Generate image" : "Generate video";
-  const wanTextOnly = state.modelId === "wan2.2-ti2v-5b";
-  const imageMode = document.querySelector('[data-mode="image"]'); imageMode.disabled = isImageModel() || wanTextOnly;
-  if ((isImageModel() || wanTextOnly) && state.mode === "image") { state.mode = "text"; state.sourceImageId = null; }
-  $("#choose-image").hidden = state.mode !== "image" || isImageModel() || wanTextOnly; $("#source-image-status").hidden = state.mode !== "image" || isImageModel() || wanTextOnly;
+  const modes = selectedModel()?.modes || ["text", "image"];
+  const textMode = document.querySelector('[data-mode="text"]');
+  const imageMode = document.querySelector('[data-mode="image"]');
+  textMode.disabled = !modes.includes("text") || isImageModel();
+  imageMode.disabled = !modes.includes("image") || isImageModel();
+  if (!modes.includes(state.mode) || isImageModel()) {
+    state.mode = isImageModel() || modes.includes("text") ? "text" : "image";
+    state.sourceImageId = state.mode === "image" ? state.sourceImageId : null;
+    for (const item of document.querySelectorAll("[data-mode]")) {
+      const selected = item.dataset.mode === state.mode;
+      item.setAttribute("aria-checked", String(selected));
+      item.classList.toggle("selected", selected);
+    }
+  }
+  $("#choose-image").hidden = state.mode !== "image" || isImageModel(); $("#source-image-status").hidden = state.mode !== "image" || isImageModel();
 }
 function renderVariants() {
   const list = $("#variant-list"); list.replaceChildren();
@@ -386,7 +403,7 @@ $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });
 for (const button of document.querySelectorAll("[data-mode]")) button.addEventListener("click", () => {
-  if (isImageModel()) return;
+  if (isImageModel() || button.disabled) return;
   state.mode = button.dataset.mode;
   for (const item of document.querySelectorAll("[data-mode]")) { const selected = item === button; item.setAttribute("aria-checked", String(selected)); item.classList.toggle("selected", selected); }
   $("#choose-image").hidden = state.mode !== "image"; $("#source-image-status").hidden = state.mode !== "image";
@@ -484,7 +501,8 @@ generateButton.addEventListener("click", async () => {
   const prompt = $("#prompt").value.trim(); const seed = Number($("#seed").value);
   if (!prompt) return setError(`Add an ${isImageModel() ? "image" : "video"} description before generating.`);
   if (!Number.isInteger(seed) || seed < 0 || seed > 2_147_483_647) return setError("Seed must be a whole number from 0 to 2147483647.");
-  if (!activeProfile()) return setError("The selected model recipe is not measured on this Mac.");
+  if (!selectedModel()?.installed) return setError("Install the selected model before generating.");
+  if (!activeProfile()) return setError("The selected model recipe is not available.");
   if (state.mode === "image" && !state.sourceImageId) {
     setError("Choose a source image before starting image-to-video.");
     return;

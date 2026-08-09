@@ -30,12 +30,15 @@ class ModelSpec:
     requires_access_confirmation: bool
     allowed_files: tuple[str, ...]
     checksum_source: str
+    supported_modes: frozenset[str] = frozenset({"text", "image"})
 
     def __post_init__(self) -> None:
         if not IMMUTABLE_REVISION.fullmatch(self.revision):
             raise ValueError("model revision must be a 40-character immutable commit")
         if not self.allowed_files:
             raise ValueError("model must declare allowed files")
+        if not self.supported_modes.issubset({"text", "image"}):
+            raise ValueError("model modes must be text and/or image")
 
 
 # Revisions and estimated cache sizes were recorded from the official Hugging
@@ -61,6 +64,21 @@ _TRANSFORMERS_FILES = (
     "merges.txt", "vocab.json", "model.safetensors", "LICENSE", "README.md",
 )
 
+_HUNYUAN_DIFFUSERS_FILES = (
+    "model_index.json", "guider/*.json", "scheduler/*.json",
+    "feature_extractor/*.json", "image_encoder/*.json", "image_encoder/*.safetensors",
+    "text_encoder/*.json", "text_encoder/*.safetensors",
+    "text_encoder_2/*.json", "text_encoder_2/*.safetensors",
+    "tokenizer/*.json", "tokenizer/*.txt", "tokenizer/*.model",
+    "tokenizer/merges.txt", "tokenizer/vocab.json",
+    "tokenizer_2/*.json", "tokenizer_2/*.txt", "tokenizer_2/*.model",
+    "tokenizer_2/merges.txt", "tokenizer_2/vocab.json",
+    "transformer/*.json", "transformer/*.safetensors",
+    "vae/*.json", "vae/*.safetensors",
+)
+
+_HUNYUAN_LICENSE = "Tencent Hunyuan Community License Agreement (territory-restricted)"
+
 REGISTRY = {
     "ltx-video": ModelSpec("ltx-video", "LTX Video", "Creates local videos from text and edits completed LTX videos.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Lightricks/LTX-Video", "8984fa25007f376c1a299016d0957a37a2f797bb", "LTX-Video Open Weights License", 24.0, True, _DIFFUSERS_FILES + ("ltxv-2b-0.9.8-distilled.safetensors",), _HF_LFS),
     "flux-schnell": ModelSpec("flux-schnell", "FLUX.1-schnell", "Creates still images for prompts and Story Mode storyboards.", frozenset({Capability.IMAGE_GENERATION}), "shareable", "black-forest-labs/FLUX.1-schnell", "741f7c3ce8b383c54771c7003378a50191e9efe9", "Apache-2.0", 54.0, True, _DIFFUSERS_FILES + ("flux1-schnell.safetensors",), _HF_LFS),
@@ -74,6 +92,8 @@ REGISTRY = {
     "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", "Wan 2.1 1.3B", "Experimental text-to-video candidate; not exposed because its measured MPS output was not watchable.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS),
     "wan2.1-14b": ModelSpec("wan2.1-14b", "Wan 2.1 14B", "Experimental text/image-to-video candidate; requires a separate measured memory strategy before use.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS),
     "wan2.2-ti2v-5b": ModelSpec("wan2.2-ti2v-5b", "Wan 2.2 TI2V 5B", "Experimental text-to-video test profile; MPS runtime passed, but the measured Diffusers output is blurry/overexposed and is not a quality-approved profile.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.2-TI2V-5B-Diffusers", "bfbd0086538bbf9b0f7c1f1939879d65e1f872ce", "Apache-2.0", 34.2, False, _DIFFUSERS_FILES, _HF_LFS),
+    "hunyuan15-480p-t2v": ModelSpec("hunyuan15-480p-t2v", "HunyuanVideo 1.5 480p T2V", "Experimental 8.3B text-to-video provider; requires a real MPS memory, cancellation, and watchability gate. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v", "286be7ce72277246578a3e3cc2487e95ddae5bcf", _HUNYUAN_LICENSE, 53.4, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
+    "hunyuan15-480p-i2v": ModelSpec("hunyuan15-480p-i2v", "HunyuanVideo 1.5 480p I2V", "Experimental 8.3B image-to-video provider; requires a real MPS memory, cancellation, and watchability gate. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v", "5a700ee883ff4c1b3d887ec4188755a7a5e2f698", _HUNYUAN_LICENSE, 54.2, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"image"})),
 }
 
 
