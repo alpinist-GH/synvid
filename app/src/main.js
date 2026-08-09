@@ -17,6 +17,7 @@ const connection = $("#connection");
 const jobStatus = $("#job-status");
 const generateButton = $("#generate");
 const cancelButton = $("#cancel");
+const setupModelButton = $("#setup-model");
 const error = $("#form-error");
 const generationProgress = $("#generation-progress");
 
@@ -61,6 +62,12 @@ function activeProfile() { const model = selectedModel(); return isImageModel() 
 function updateControls() {
   const profile = activeProfile(); const available = state.connected && profile && !state.activeJob;
   generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
+  setupModelButton.hidden = !state.connected || Boolean(profile) || Boolean(state.activeJob);
+  if (!state.activeJob) {
+    if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
+    else if (!profile) jobStatus.textContent = "Set up a measured local model before generating. SynVid will show its size, license, and revision first.";
+    else jobStatus.textContent = "Ready to generate locally.";
+  }
   renderGenerationProgress(state.activeJob);
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
   $("#fps").textContent = profile && !isImageModel() ? `${profile.fps} FPS (Native)` : "—";
@@ -318,6 +325,7 @@ $("#generate-voice").addEventListener("click", async () => {
   } catch (reason) { setError(String(reason)); }
 });
 $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });
+setupModelButton.addEventListener("click", showSettings);
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#library-button").addEventListener("click", showLibrary); $("#settings-button").addEventListener("click", showSettings); $("#about-button").addEventListener("click", showAbout); $("#recovery-button").addEventListener("click", showRecovery);
