@@ -221,6 +221,15 @@ impl WorkerSupervisor {
         }
     }
 
+    /// Last worker stderr lines (bounded to 128 by the collector thread),
+    /// exposed read-only for the opt-in diagnostic export.
+    pub fn recent_stderr_lines(&self) -> Vec<String> {
+        self.stderr_lines
+            .lock()
+            .expect("worker stderr lock poisoned")
+            .clone()
+    }
+
     pub fn take_pending_events(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.pending_events)
     }

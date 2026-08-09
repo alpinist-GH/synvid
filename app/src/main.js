@@ -541,6 +541,23 @@ $("#clean-temporary").addEventListener("click", async () => {
   catch (reason) { $("#cleanup-status").textContent = `Cleanup could not run: ${String(reason)}`; }
   finally { button.disabled = false; }
 });
+let diagnosticsText = "";
+$("#preview-diagnostics").addEventListener("click", async () => {
+  const button = $("#preview-diagnostics"); button.disabled = true;
+  try {
+    const { text } = await invoke("diagnostic_bundle");
+    diagnosticsText = text; $("#diagnostics-preview").value = text; $("#export-diagnostics").disabled = false;
+    $("#diagnostics-status").textContent = "Preview matches exactly what export will save.";
+  } catch (reason) { $("#diagnostics-status").textContent = `Could not build a preview: ${String(reason)}`; }
+  finally { button.disabled = false; }
+});
+$("#export-diagnostics").addEventListener("click", async () => {
+  if (!diagnosticsText) return;
+  const button = $("#export-diagnostics"); button.disabled = true;
+  try { const result = await invoke("export_diagnostics", { text: diagnosticsText }); $("#diagnostics-status").textContent = result.saved ? "Diagnostic export saved." : "Export cancelled."; }
+  catch (reason) { $("#diagnostics-status").textContent = `Export could not run: ${String(reason)}`; }
+  finally { button.disabled = false; }
+});
 generateButton.addEventListener("click", async () => {
   const prompt = $("#prompt").value.trim(); const seed = Number($("#seed").value);
   if (!prompt) return setError(`Add an ${isImageModel() ? "image" : "video"} description before generating.`);

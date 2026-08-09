@@ -880,6 +880,121 @@ fn export_video(
     )
 }
 
+/// Redacts the local home-directory path and any Hugging Face token-shaped
+/// string from a diagnostic line, so an opt-in export never carries the
+/// user's account name or a live credential even if a bundled library
+/// happened to print one to stderr (e.g. inside an unhandled traceback).
+fn redact_diagnostic_line(line: &str, home: Option<&std::path::Path>) -> String {
+    let mut redacted = line.to_string();
+    if let Some(home) = home.and_then(|home| home.to_str()) {
+        redacted = redacted.replace(home, "~");
+    }
+    let mut result = String::with_capacity(redacted.len());
+    let mut rest = redacted.as_str();
+    while let Some(start) = rest.find("hf_") {
+        result.push_str(&rest[..start]);
+        let token_region = &rest[start..];
+        let token_len = token_region
+            .char_indices()
+            .take_while(|(_, character)| character.is_ascii_alphanumeric() || *character == '_')
+            .count();
+        if token_len >= 20 {
+            result.push_str("hf_***redacted***");
+        } else {
+            result.push_str(&token_region[..token_len]);
+        }
+        rest = &token_region[token_len..];
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Assembles the exact, bounded text an opt-in diagnostic export would
+/// write. The frontend previews this string verbatim and, on export, sends
+/// the same string back to `export_diagnostics` — so the saved file can
+/// never drift from what the user reviewed.
+#[tauri::command]
+fn diagnostic_bundle(
+    app: tauri::AppHandle,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    let home = app.path().home_dir().ok();
+    let supervisor = supervisor.lock().expect("worker supervisor lock poisoned");
+    let protocol_version = match supervisor.state() {
+        SupervisorState::Ready { protocol_version } => Some(protocol_version),
+        _ => None,
+    };
+    let mut lines = vec![
+        "SynVid diagnostic export".to_string(),
+        format!("app version: {}", env!("CARGO_PKG_VERSION")),
+        format!("os: {} {}", std::env::consts::OS, std::env::consts::ARCH),
+        format!(
+            "worker connected: {}",
+            matches!(supervisor.state(), SupervisorState::Ready { .. })
+        ),
+        format!(
+            "worker protocol version: {}",
+            protocol_version
+                .map(|version| version.to_string())
+                .unwrap_or_else(|| "unavailable".into())
+        ),
+        String::new(),
+        "last worker stderr lines (bounded to 128, redacted):".to_string(),
+    ];
+    lines.extend(
+        supervisor
+            .recent_stderr_lines()
+            .iter()
+            .map(|line| redact_diagnostic_line(line, home.as_deref())),
+    );
+    Ok(json!({"text": lines.join("\n")}))
+}
+
+#[tauri::command]
+fn export_diagnostics(text: String) -> Result<Value, String> {
+    if text.is_empty() || text.len() > 256 * 1024 {
+        return Err("Diagnostic export is unavailable.".into());
+    }
+    let Some(destination) = rfd::FileDialog::new()
+        .add_filter("Text", &["txt"])
+        .set_file_name("SynVid-diagnostics.txt")
+        .save_file()
+    else {
+        return Ok(json!({"saved": false}));
+    };
+    let destination = if destination.extension().is_none() {
+        destination.with_extension("txt")
+    } else {
+        destination
+    };
+    if destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("txt")
+    {
+        return Err("Diagnostic export filenames must use the .txt extension.".into());
+    }
+    if destination.exists() {
+        return Err("That file already exists. Choose a different filename.".into());
+    }
+    let parent = destination
+        .parent()
+        .filter(|path| path.is_dir())
+        .ok_or("The selected folder is unavailable.")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable.")?
+        .as_nanos();
+    let temporary = parent.join(format!(".synvid-diagnostics-{nonce}.partial"));
+    fs::write(&temporary, &text).map_err(|_| "Could not save the diagnostic export.")?;
+    if fs::hard_link(&temporary, &destination).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err("Could not save the diagnostic export; choose a different filename.".into());
+    }
+    fs::remove_file(&temporary).map_err(|_| "Could not finalize the diagnostic export.")?;
+    Ok(json!({"saved": true}))
+}
+
 fn is_supported_image(path: &std::path::Path) -> Result<bool, String> {
     let metadata = fs::symlink_metadata(path).map_err(|_| "The selected image is unavailable.")?;
     if metadata.file_type().is_symlink()
@@ -1107,17 +1222,27 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(WorkerSupervisor::new()))
         .setup(|app| {
-            let worker_path = app
-                .path()
-                .resource_dir()?
-                .join("resources/worker/synvid-worker/synvid-worker");
-            if let Err(error) = app
-                .state::<Mutex<WorkerSupervisor>>()
-                .lock()
-                .expect("worker supervisor lock poisoned")
-                .start(&worker_path)
-            {
-                eprintln!("SynVid worker unavailable: {error}");
+            // A missing/damaged bundled worker (or an unresolvable resource
+            // directory) must degrade to "worker unavailable" in the UI, not
+            // crash the whole process: `tao`'s launch delegate cannot unwind
+            // a panic across its native callback boundary, so any `?` here
+            // would abort SynVid before a window ever appears.
+            match app.path().resource_dir() {
+                Ok(resource_dir) => {
+                    let worker_path =
+                        resource_dir.join("resources/worker/synvid-worker/synvid-worker");
+                    if let Err(error) = app
+                        .state::<Mutex<WorkerSupervisor>>()
+                        .lock()
+                        .expect("worker supervisor lock poisoned")
+                        .start(&worker_path)
+                    {
+                        eprintln!("SynVid worker unavailable: {error}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("SynVid resource directory unavailable: {error}");
+                }
             }
             Ok(())
         })
@@ -1159,8 +1284,39 @@ pub fn run() {
             choose_story_narration,
             choose_story_clip,
             choose_story_project,
+            diagnostic_bundle,
+            export_diagnostics,
             cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running SynVid");
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::redact_diagnostic_line;
+    use std::path::Path;
+
+    #[test]
+    fn redacts_home_directory_and_token() {
+        let home = Path::new("/Users/alpinist");
+        let line = "downloading with token hf_ABCDEFGHIJKLMNOPQRSTuvwxyz from /Users/alpinist/Library";
+        let redacted = redact_diagnostic_line(line, Some(home));
+        assert!(!redacted.contains("/Users/alpinist"));
+        assert!(!redacted.contains("hf_ABCDEFGHIJKLMNOPQRSTuvwxyz"));
+        assert!(redacted.contains("~/Library"));
+        assert!(redacted.contains("hf_***redacted***"));
+    }
+
+    #[test]
+    fn leaves_short_hf_prefixed_words_alone() {
+        let redacted = redact_diagnostic_line("hf_hub cache miss", None);
+        assert_eq!(redacted, "hf_hub cache miss");
+    }
+
+    #[test]
+    fn leaves_ordinary_lines_untouched() {
+        let redacted = redact_diagnostic_line("model loaded in 4.2s", None);
+        assert_eq!(redacted, "model loaded in 4.2s");
+    }
 }

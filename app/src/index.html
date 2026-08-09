@@ -190,6 +190,14 @@
         <button id="clean-temporary" type="button">Clean temporary files</button>
         <p id="cleanup-status" class="field-help" role="status"></p>
       </section>
+      <section class="diagnostics" aria-labelledby="diagnostics-title">
+        <h3 id="diagnostics-title">Diagnostics</h3>
+        <p class="field-help">Opt-in only. Builds a small local text bundle (app/OS version, worker status, the last 128 worker log lines) with your home folder path and any accidental token-shaped text removed. Review the exact contents below before saving.</p>
+        <button id="preview-diagnostics" type="button">Preview diagnostics</button>
+        <textarea id="diagnostics-preview" class="diagnostics-preview" readonly rows="8" aria-label="Diagnostic export preview" placeholder="Nothing previewed yet."></textarea>
+        <button id="export-diagnostics" type="button" disabled>Export diagnostics…</button>
+        <p id="diagnostics-status" class="field-help" role="status"></p>
+      </section>
       <button class="secondary close-dialog" type="button">Close</button>
     </dialog>
     <dialog id="confirm-dialog" aria-labelledby="confirm-title">

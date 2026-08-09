@@ -61,6 +61,7 @@ from .narration import KokoroNarrator, NarrationError
 from .stories import StoryError
 from .story_planner import StoryPlannerError
 from .story_compose import StoryComposeError
+from .store import StoreError
 
 
 WORKER_VERSION = "0.1.0"
@@ -343,6 +344,21 @@ def serve() -> int:
         except (ProtocolError, GenerationError, NarrationError, StoryError, StoryPlannerError, StoryComposeError, KeyError, TypeError) as error:
             # A malformed request cannot be trusted to contain a valid ID.
             _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "invalid_request", "message": str(error)})
+        except StoreError as error:
+            # Corrupt or incompatible-newer-schema metadata must be reported
+            # back over the protocol, not left to crash the whole worker
+            # process out from under Rust mid-session.
+            _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "store_unavailable", "message": str(error)})
+        except Exception as error:
+            # Last-resort safety net for the synchronous (non-job) request
+            # kinds above: a denied-file-access OSError, a permission error
+            # walking a directory, or any other unanticipated failure must
+            # fail that one request, not take down a worker that may have
+            # other in-flight state. Job-based requests already get this
+            # guarantee from JobManager._run's own broad catch; this mirrors
+            # it for everything dispatched inline in this loop.
+            print(f"unexpected error handling {request.kind if request else 'unknown'!r} request: {error!r}", file=sys.stderr)
+            _reply(request or Envelope(1, "protocol-error", "error", {}), "error", {"code": "internal_error", "message": "SynVid hit an unexpected local error handling that request."})
     return 0
 
 
