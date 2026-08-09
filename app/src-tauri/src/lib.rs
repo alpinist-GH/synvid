@@ -60,6 +60,14 @@ struct NarrateRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct DeleteOutputRequest {
+    output_id: String,
+    #[serde(default)]
+    cascade: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StoryCreateRequest {
     title: String,
     premise: String,
@@ -637,12 +645,12 @@ fn list_outputs(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result
 
 #[tauri::command]
 fn delete_output(
-    output_id: String,
-    cascade: bool,
+    request: DeleteOutputRequest,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if output_id.len() != 36
-        || !output_id
+    if request.output_id.len() != 36
+        || !request
+            .output_id
             .chars()
             .all(|character| character.is_ascii_hexdigit() || character == '-')
     {
@@ -652,7 +660,10 @@ fn delete_output(
         supervisor
             .lock()
             .expect("worker supervisor lock poisoned")
-            .request("delete_output", json!({"output_id": output_id, "cascade": cascade}))?,
+            .request(
+                "delete_output",
+                json!({"output_id": request.output_id, "cascade": request.cascade}),
+            )?,
     )
 }
 

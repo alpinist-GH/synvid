@@ -238,7 +238,7 @@ async function downloadRequiredModel() {
     button.disabled = false;
   }
 }
-async function showLibrary() {
+async function showLibrary(message = "") {
   const dialog = $("#library-dialog"); const list = $("#library-list"); const status = $("#library-status"); list.replaceChildren(); status.textContent = "";
   try {
     const { outputs = [] } = await invoke("list_outputs");
@@ -257,8 +257,11 @@ async function showLibrary() {
           const deletedIds = new Set(result.deleted_output_ids ?? result.deletedOutputIds ?? [output.output_id]);
           state.variants = state.variants.filter((variant) => !deletedIds.has(variant.outputId));
           if (deletedIds.has(state.selectedVariant)) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }
-          renderVariants(); await showLibrary(); const count = deletedIds.size; status.textContent = `Deleted ${count} local generation${count === 1 ? "" : "s"} and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
-          $("#result-message").textContent = status.textContent;
+          renderVariants();
+          const count = deletedIds.size;
+          const success = `Deleted ${count} local generation${count === 1 ? "" : "s"} and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
+          $("#result-message").textContent = success;
+          await showLibrary(success);
         } catch (reason) { status.textContent = `Could not delete this generation: ${String(reason)}.`; remove.disabled = false; forceRemove.disabled = false; }
       };
       remove.addEventListener("click", () => { void deleteOutput(false); });
@@ -266,7 +269,8 @@ async function showLibrary() {
       item.append(select, remove, forceRemove); list.append(item);
     }
     if (!outputs.length) list.textContent = "No completed local outputs yet.";
-  } catch { list.textContent = "The local library is unavailable while the worker is disconnected."; }
+  } catch (reason) { list.textContent = "The local library is unavailable while the worker is disconnected."; status.textContent = `Could not refresh the Library: ${String(reason)}.`; }
+  if (message) status.textContent = message;
   if (!dialog.open) dialog.showModal();
 }
 async function showRecovery() {
