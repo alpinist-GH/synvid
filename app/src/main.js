@@ -137,10 +137,27 @@ async function showLibrary() {
   const dialog = $("#library-dialog"); const list = $("#library-list"); list.replaceChildren();
   try {
     const { outputs = [] } = await invoke("list_outputs");
-    for (const output of outputs) { const item = document.createElement("li"); const button = document.createElement("button"); button.type = "button"; button.className = "variant"; button.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`; button.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown", mediaFile: output.media_file }); dialog.close(); }); item.append(button); list.append(item); }
+    for (const output of outputs) {
+      const item = document.createElement("li"); item.className = "library-item";
+      const select = document.createElement("button"); select.type = "button"; select.className = "variant"; select.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`;
+      select.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown", mediaFile: output.media_file }); dialog.close(); });
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("Delete this completed generation from SynVid? Its media and local Library record will be permanently removed.")) return;
+        remove.disabled = true;
+        try {
+          const result = await invoke("delete_output", { outputId: output.output_id });
+          state.variants = state.variants.filter((variant) => variant.outputId !== output.output_id);
+          if (state.selectedVariant === output.output_id) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }
+          renderVariants(); await showLibrary();
+          $("#result-message").textContent = `Deleted local generation and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
+        } catch (reason) { setError(String(reason)); remove.disabled = false; }
+      });
+      item.append(select, remove); list.append(item);
+    }
     if (!outputs.length) list.textContent = "No completed local outputs yet.";
   } catch { list.textContent = "The local library is unavailable while the worker is disconnected."; }
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
 }
 async function showRecovery() {
   const dialog = $("#recovery-dialog"); $("#recovery-preview").textContent = "Checking recoverable state…"; dialog.showModal();
@@ -240,6 +257,7 @@ async function showStory() {
 restoreDraft();
 if (!localStorage.getItem(ONBOARDING_KEY)) $("#onboarding").showModal();
 $("#complete-onboarding").addEventListener("click", () => localStorage.setItem(ONBOARDING_KEY, "complete"));
+$("#show-generation-guide").addEventListener("click", () => $("#generation-guide-dialog").showModal());
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });

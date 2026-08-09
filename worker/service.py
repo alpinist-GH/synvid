@@ -20,7 +20,7 @@ from .paths import AppPaths
 from .providers.base import Capability, OperationRequest, Provider
 from .resources import Estimate, ReservationBook
 from .store import Store
-from .stories import StoryStore
+from .stories import StoryError, StoryStore
 from .story_planner import QwenStoryPlanner
 from .story_render import StoryRenderer
 from .story_compose import StoryComposeError, compose_hard_cuts
@@ -471,6 +471,54 @@ class GenerationService:
                 shutil.rmtree(child)
         root.mkdir(parents=True, exist_ok=True)
         return {"freed_bytes": freed_bytes}
+
+    def delete_output(self, output_id: str) -> dict:
+        """Explicitly remove one unreferenced, completed owned output.
+
+        Outputs are immutable while retained, but retention is not permanent.
+        Refuse a default deletion if another output or any Story still refers to
+        it; those relationships need a separate, visible cascade workflow.
+        """
+        if self.jobs.current() is not None:
+            raise GenerationError("wait for the active job before deleting a library item")
+        if not _OUTPUT_ID.fullmatch(output_id):
+            raise GenerationError("output ID is invalid")
+        output_dir = self.paths.outputs / output_id
+        if output_dir.is_symlink() or not output_dir.is_dir():
+            raise GenerationError("library item is unavailable")
+        if self._output_has_descendants(output_id):
+            raise GenerationError("this item has generated descendants and cannot be deleted here")
+        if self._story_references_output(output_id):
+            raise GenerationError("this item is used by a Story and cannot be deleted here")
+        freed_bytes = self._tree_size(output_dir)
+        shutil.rmtree(output_dir)
+        self.store.remove_output(output_id)
+        return {"deleted": True, "output_id": output_id, "freed_bytes": freed_bytes}
+
+    def _output_has_descendants(self, output_id: str) -> bool:
+        connection = self.store.open()
+        try:
+            rows = connection.execute("SELECT metadata_json FROM outputs WHERE output_id != ?", (output_id,)).fetchall()
+        finally:
+            connection.close()
+        for (raw,) in rows:
+            try:
+                lineage = json.loads(raw).get("lineage", [])
+                if any(item.get("output_id") == output_id for item in lineage if isinstance(item, dict)):
+                    return True
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return False
+
+    def _story_references_output(self, output_id: str) -> bool:
+        for summary in self.stories.list():
+            try:
+                story = self.stories.get(summary["story_id"])
+            except (KeyError, StoryError):
+                continue
+            if output_id in self.stories._artifact_ids(story):
+                return True
+        return False
 
     def _model_status(self, model_id: str) -> dict:
         spec = REGISTRY[model_id]

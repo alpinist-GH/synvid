@@ -644,6 +644,26 @@ fn list_outputs(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result
 }
 
 #[tauri::command]
+fn delete_output(
+    output_id: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if output_id.len() != 36
+        || !output_id
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
+    {
+        return Err("Invalid output deletion request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("delete_output", json!({"output_id": output_id}))?,
+    )
+}
+
+#[tauri::command]
 fn model_catalog(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
     response_payload(
         supervisor
@@ -1066,6 +1086,7 @@ pub fn run() {
             hugging_face_credential_status,
             worker_status,
             list_outputs,
+            delete_output,
             model_catalog,
             download_model,
             remove_model,

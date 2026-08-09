@@ -113,6 +113,10 @@ def serve() -> int:
                 _reply(request, "status", service.clean_temporary())
             elif request.kind == "list_outputs":
                 _reply(request, "status", {"outputs": service.library_payload()})
+            elif request.kind == "delete_output":
+                output_id = request.payload.get("output_id")
+                if not isinstance(output_id, str): raise ProtocolError("delete_output requires an output ID")
+                _reply(request, "status", service.delete_output(output_id))
             elif request.kind == "recovery_preview":
                 _reply(request, "status", service.recovery_preview())
             elif request.kind == "recover":

@@ -32,6 +32,11 @@
         <textarea id="prompt" maxlength="4000" placeholder="A yellow flower gently moving in a spring breeze" autofocus></textarea>
         <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
 
+        <section class="generation-guide" aria-labelledby="generation-guide-title">
+          <div><h3 id="generation-guide-title">Create a video in 3 steps</h3><button id="show-generation-guide" class="text-button" type="button">Show guide</button></div>
+          <ol><li><strong>Describe it</strong><span>Write what you want to see.</span></li><li><strong>Choose a recipe</strong><span>Balanced is the recommended starting point.</span></li><li><strong>Generate and review</strong><span>Play the result, then keep, export, or try another variant.</span></li></ol>
+        </section>
+
         <fieldset>
           <legend>Generation mode</legend>
           <div class="chips" role="radiogroup" aria-label="Generation mode">
@@ -141,9 +146,14 @@
     </dialog>
     <dialog id="library-dialog" aria-labelledby="library-title">
       <h2 id="library-title">Library</h2>
-      <p class="field-help">Library metadata remains local. Select an item to promote it as this window’s current variant.</p>
+      <p class="field-help">Completed local generations stay here until you delete them. Select an item to reopen it, or delete an item you no longer need.</p>
       <ol id="library-list" class="variant-list"></ol>
       <button class="secondary close-dialog" type="button">Close</button>
+    </dialog>
+    <dialog id="generation-guide-dialog" aria-labelledby="generation-guide-dialog-title">
+      <h2 id="generation-guide-dialog-title">Your first SynVid generation</h2>
+      <ol class="guide-steps"><li><strong>Describe the motion.</strong> Include a subject, action, setting, and style: “A yellow flower gently sways in a spring breeze, close-up, soft morning light.”</li><li><strong>Pick how you begin.</strong> Use Text to video for an idea from words, or Image to video to animate an image you choose.</li><li><strong>Start with Balanced.</strong> It is the measured local recipe. Draft is for faster experiments; High takes longer.</li><li><strong>Generate, then review.</strong> Progress remains visible while SynVid works. Completed videos are saved locally in Library, where you can reopen, export, or delete them.</li></ol>
+      <button class="secondary close-dialog" type="button">Got it</button>
     </dialog>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>

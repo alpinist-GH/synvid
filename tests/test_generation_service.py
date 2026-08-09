@@ -78,6 +78,30 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(cleaned["freed_bytes"], len(b"temporary")); self.assertFalse(temporary.exists())
             self.assertTrue(service.paths.outputs.is_dir())
 
+    def test_library_deletion_removes_unreferenced_output_and_refuses_descendants(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            terminal = threading.Event(); received = []
+            service.submit(self.PAYLOAD, lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()))
+            self.assertTrue(terminal.wait(2))
+            output_id = received[0][1]["output_id"]
+            self.assertEqual([item["output_id"] for item in service.library_payload()], [output_id])
+            result = service.delete_output(output_id)
+            self.assertTrue(result["deleted"])
+            self.assertGreater(result["freed_bytes"], 0)
+            self.assertFalse((service.paths.outputs / output_id).exists())
+            self.assertEqual(service.library_payload(), [])
+
+            source_id = "00000000-0000-0000-0000-000000000001"
+            descendant_id = "00000000-0000-0000-0000-000000000002"
+            for item_id, lineage in ((source_id, []), (descendant_id, [{"output_id": source_id, "relation": "edited_from"}])):
+                directory = service.paths.outputs / item_id; directory.mkdir()
+                (directory / "video.mp4").write_bytes(b"video")
+                metadata = {"output_id": item_id, "request": {}, "result": {"media_file": "video.mp4"}, "lineage": lineage}
+                path = directory / "metadata.json"; path.write_text(json.dumps(metadata)); service._index_output(path)
+            with self.assertRaisesRegex(GenerationError, "descendants"):
+                service.delete_output(source_id)
+
     def test_story_planner_draft_is_cancellable_and_unloaded(self):
         class BlockingPlanner:
             def __init__(self): self.unloaded = False

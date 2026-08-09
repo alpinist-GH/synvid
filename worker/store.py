@@ -99,3 +99,12 @@ class Store:
         finally:
             connection.close()
         return count
+
+    def remove_output(self, output_id: str) -> None:
+        """Remove only one already-deleted output from the searchable index."""
+        connection = self.open()
+        try:
+            with connection:
+                connection.execute("DELETE FROM outputs WHERE output_id = ?", (output_id,))
+        finally:
+            connection.close()
