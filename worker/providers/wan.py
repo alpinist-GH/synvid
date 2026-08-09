@@ -27,11 +27,17 @@ class WanMeasuredProfile:
     dtype: str
     estimated_disk_bytes: int
     peak_rss_bytes: int
+    peak_mps_allocated_bytes: int = 0
+    wall_time_seconds: float = 0.0
 
     @classmethod
     def from_json(cls, path: Path) -> "WanMeasuredProfile":
         try:
-            profile = cls(**json.loads(path.read_text()))
+            raw = json.loads(path.read_text())
+            if not isinstance(raw, dict):
+                raise ValueError("profile must be an object")
+            fields = {name: raw[name] for name in cls.__dataclass_fields__ if name in raw}
+            profile = cls(**fields)
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise WanProviderError("missing or invalid measured Wan profile") from error
         if min(profile.width, profile.height, profile.frames, profile.fps, profile.steps, profile.estimated_disk_bytes, profile.peak_rss_bytes) <= 0:
@@ -41,24 +47,36 @@ class WanMeasuredProfile:
         return profile
 
 
-class WanT2VProvider:
-    facts = ProviderFacts(
-        provider_id="wan2.1-1.3b",
-        capabilities=frozenset({Capability.VIDEO_GENERATION}),
-        profile="shareable",
-        revision=REGISTRY["wan2.1-1.3b"].revision,
-        license_name=REGISTRY["wan2.1-1.3b"].license_name,
-        requires_access_confirmation=False,
-    )
+@dataclass(frozen=True)
+class WanMeasuredRecipes:
+    recipes: dict[str, WanMeasuredProfile]
 
-    def __init__(self, model_root: Path, measured_profile: Path):
+
+class WanT2VProvider:
+    def __init__(self, model_root: Path, measured_profile: Path, model_id: str = "wan2.1-1.3b"):
+        if model_id not in REGISTRY:
+            raise ValueError("unknown Wan model")
+        self._model_id = model_id
+        spec = REGISTRY[model_id]
+        self.facts = ProviderFacts(
+            provider_id=model_id,
+            capabilities=frozenset({Capability.VIDEO_GENERATION}),
+            profile=spec.profile,
+            revision=spec.revision,
+            license_name=spec.license_name,
+            requires_access_confirmation=spec.requires_access_confirmation,
+        )
         self._model_root = model_root
         self._measured_profile_path = measured_profile
         self._pipeline = None
 
     @property
     def spec(self) -> ModelSpec:
-        return REGISTRY["wan2.1-1.3b"]
+        return REGISTRY[self._model_id]
+
+    def measured_recipes(self):
+        """Expose the single measured test profile as the Balanced recipe."""
+        return WanMeasuredRecipes({"Balanced": self.measured_profile()})
 
     def measured_profile(self) -> WanMeasuredProfile:
         return WanMeasuredProfile.from_json(self._measured_profile_path)
@@ -109,7 +127,7 @@ class WanT2VProvider:
     def _load(self, dtype_name: str):
         if self._pipeline is not None:
             return self._pipeline
-        manifest_path = self._model_root.parent / "wan2.1-1.3b.sha256.json"
+        manifest_path = self._model_root.parent / f"{self._model_id}.sha256.json"
         try:
             manifest = json.loads(manifest_path.read_text())
             if not isinstance(manifest, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in manifest.items()):

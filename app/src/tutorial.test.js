@@ -38,3 +38,9 @@ test("library deletion reports its result inside the open dialog", () => {
   assert.match(source, /await showLibrary\(success\)/);
   assert.match(source, /Could not refresh the Library:/);
 });
+
+test("experimental Wan 2.2 is selectable for measured text-to-video testing", () => {
+  assert.match(markup, /value="wan2\.2-ti2v-5b"/);
+  assert.match(source, /Ready for experimental Wan 2\.2 testing/);
+  assert.match(source, /wanTextOnly/);
+});

@@ -410,12 +410,17 @@ class GenerationService:
         current = self.jobs.current()
         profiles, image_profile = self._measured_profiles(self.provider)
         available_models = {}
-        for model_id, provider in self._providers.items():
-            recipes, image = self._measured_profiles(provider)
+        model_ids = list(REGISTRY)
+        model_ids.extend(model_id for model_id in self._providers if model_id not in REGISTRY)
+        for model_id in model_ids:
+            spec = REGISTRY.get(model_id)
+            provider = self._providers.get(model_id)
+            recipes, image = self._measured_profiles(provider) if provider else (None, None)
             available_models[model_id] = {
-                "capabilities": [capability.value for capability in provider.facts.capabilities],
+                "capabilities": [capability.value for capability in (spec.capabilities if spec else provider.facts.capabilities)],
                 "measured_recipes": recipes,
                 "measured_image_profile": image,
+                "reason": spec.reason if spec else "Runtime test provider.",
             }
         return {
             "active_job": self._job_payload(current) if current else None,
@@ -598,16 +603,17 @@ class GenerationService:
             # than guessed by the UI.
             pass
         image_profile = None
-        try:
-            profile = provider.measured_profile()
-            image_profile = {
-                "width": profile.width,
-                "height": profile.height,
-                "steps": profile.steps,
-                "guidance_scale": profile.guidance_scale,
-            }
-        except (AttributeError, ValueError, OSError, RuntimeError):
-            pass
+        if Capability.VIDEO_GENERATION not in provider.facts.capabilities:
+            try:
+                profile = provider.measured_profile()
+                image_profile = {
+                    "width": profile.width,
+                    "height": profile.height,
+                    "steps": profile.steps,
+                    "guidance_scale": profile.guidance_scale,
+                }
+            except (AttributeError, ValueError, OSError, RuntimeError):
+                pass
         return profiles, image_profile
 
     def export(self, output_id: str, profile: str) -> dict:

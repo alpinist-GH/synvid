@@ -127,16 +127,18 @@ function updateControls() {
   setupModelButton.hidden = !state.connected || Boolean(profile) || Boolean(state.activeJob);
   if (!state.activeJob) {
     if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
-    else if (!profile) jobStatus.textContent = "Set up a measured local model before generating. SynVid will show its size, license, and revision first.";
+    else if (!profile) jobStatus.textContent = selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.";
+    else if (state.modelId === "wan2.2-ti2v-5b") jobStatus.textContent = "Ready for experimental Wan 2.2 testing. The measured output has not passed the quality gate.";
     else jobStatus.textContent = "Ready to generate locally.";
   }
   renderGenerationProgress(state.activeJob);
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
   $("#fps").textContent = profile && !isImageModel() ? `${profile.fps} FPS (Native)` : "—";
   generateButton.textContent = isImageModel() ? "Generate image" : "Generate video";
-  const imageMode = document.querySelector('[data-mode="image"]'); imageMode.disabled = isImageModel();
-  if (isImageModel() && state.mode === "image") { state.mode = "text"; state.sourceImageId = null; }
-  $("#choose-image").hidden = state.mode !== "image" || isImageModel(); $("#source-image-status").hidden = state.mode !== "image" || isImageModel();
+  const wanTextOnly = state.modelId === "wan2.2-ti2v-5b";
+  const imageMode = document.querySelector('[data-mode="image"]'); imageMode.disabled = isImageModel() || wanTextOnly;
+  if ((isImageModel() || wanTextOnly) && state.mode === "image") { state.mode = "text"; state.sourceImageId = null; }
+  $("#choose-image").hidden = state.mode !== "image" || isImageModel() || wanTextOnly; $("#source-image-status").hidden = state.mode !== "image" || isImageModel() || wanTextOnly;
 }
 function renderVariants() {
   const list = $("#variant-list"); list.replaceChildren();

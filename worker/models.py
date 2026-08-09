@@ -73,6 +73,7 @@ REGISTRY = {
     "qwen-story-planner": ModelSpec("qwen-story-planner", "Qwen Story Planner", "Optional local draft-scene assistant; currently unavailable because its structured-output quality gate did not pass.", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
     "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", "Wan 2.1 1.3B", "Experimental text-to-video candidate; not exposed because its measured MPS output was not watchable.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS),
     "wan2.1-14b": ModelSpec("wan2.1-14b", "Wan 2.1 14B", "Experimental text/image-to-video candidate; requires a separate measured memory strategy before use.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS),
+    "wan2.2-ti2v-5b": ModelSpec("wan2.2-ti2v-5b", "Wan 2.2 TI2V 5B", "Experimental text-to-video test profile; MPS runtime passed, but the measured Diffusers output is blurry/overexposed and is not a quality-approved profile.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.2-TI2V-5B-Diffusers", "bfbd0086538bbf9b0f7c1f1939879d65e1f872ce", "Apache-2.0", 34.2, False, _DIFFUSERS_FILES, _HF_LFS),
 }
 
 

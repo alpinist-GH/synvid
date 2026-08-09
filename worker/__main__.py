@@ -12,6 +12,7 @@ from .paths import AppPaths
 from .providers.ltx import LtxProvider
 from .providers.flux import FluxSchnellProvider
 from .providers.qwen_image_edit import QwenImageEditProvider
+from .providers.wan import WanT2VProvider
 from .resources import Estimate
 from .service import GenerationError, GenerationService
 from .jobs import BusyError
@@ -53,15 +54,21 @@ def _service() -> GenerationService:
         paths.models / "qwen-image-edit" / "snapshot",
         paths.models / "qwen-image-edit" / "measured-profile.json",
     )
+    wan22 = WanT2VProvider(
+        paths.models / "wan2.2-ti2v-5b" / "snapshot",
+        paths.models / "wan2.2-ti2v-5b" / "measured-profile.json",
+        model_id="wan2.2-ti2v-5b",
+    )
     estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
     flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
     qwen_image_edit_estimate = _measured_estimate(paths.models / "qwen-image-edit" / "measured-profile.json")
+    wan22_estimate = _measured_estimate(paths.models / "wan2.2-ti2v-5b" / "measured-profile.json")
     return GenerationService(
         paths,
         ltx,
         estimate,
-        additional_providers=(flux, qwen_image_edit),
-        estimates={"flux-schnell": flux_estimate, "qwen-image-edit": qwen_image_edit_estimate},
+        additional_providers=(flux, qwen_image_edit, wan22),
+        estimates={"flux-schnell": flux_estimate, "qwen-image-edit": qwen_image_edit_estimate, "wan2.2-ti2v-5b": wan22_estimate},
         narrator=KokoroNarrator(paths.models / "kokoro-onnx" / "snapshot"),
     )
 

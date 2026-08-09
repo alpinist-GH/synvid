@@ -27,7 +27,7 @@ def _peak_rss_bytes() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-support", type=Path, required=True)
-    parser.add_argument("--model", choices=("wan2.1-1.3b", "wan2.1-14b"), default="wan2.1-1.3b")
+    parser.add_argument("--model", choices=("wan2.1-1.3b", "wan2.1-14b", "wan2.2-ti2v-5b"), default="wan2.1-1.3b")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--height", type=int, default=480)
@@ -109,7 +109,7 @@ def main() -> int:
         "dtype": args.dtype,
         "strategy": args.strategy,
         "model": args.model,
-        "estimated_disk_bytes": video.stat().st_size,
+        "estimated_disk_bytes": sum(path.stat().st_size for path in model_root.rglob("*") if path.is_file()),
         "peak_rss_bytes": _peak_rss_bytes(),
         "peak_mps_allocated_bytes": peak_mps_allocated_bytes,
         "wall_time_seconds": elapsed_seconds,

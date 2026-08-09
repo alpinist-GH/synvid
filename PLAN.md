@@ -138,7 +138,7 @@ The v1 release target is **Apple Silicon macOS only**. Pin and document the mini
 
 **Center "Compose" card** (header + status dot: Ready / Loading model… / Generating…):
 
-- **Model** chips (replacing "Style" chips): `FLUX.1-schnell`, `FLUX.1-dev` (non-commercial opt-in), `LTX-Video`, `Wan2.1-1.3B`, `Wan2.1-14B` (experimental). A chip cannot initiate an unannounced download; unavailable models first show revision, size, license, disk-space impact, and an explicit Download action.
+- **Model** chips (replacing "Style" chips): `FLUX.1-schnell`, `FLUX.1-dev` (non-commercial opt-in), `LTX-Video`, `Wan2.1-1.3B`, `Wan2.1-14B`, and `Wan2.2 TI2V-5B` (experimental). A chip cannot initiate an unannounced download; unavailable models first show revision, size, license, disk-space impact, and an explicit Download action.
 - **Prompt** textarea
 - **Mode** chips: `Text → Image` (flux models only), `Text → Video`, `Image → Video` — an explicit choice rather than inferring from drag-and-drop, which resolves the ambiguity about what happens when an image is dropped on FLUX. Selecting `Image → Video` reveals the drag-and-drop image zone; it's hidden otherwise. `Image → Video` is disabled/hidden for `wan2.1-1.3b` (no i2v variant) and for flux models (no img2img in v1).
 - **Aspect ratio / resolution** chips (replacing "Persona" chips) — populated from the selected model's valid presets in the registry, not free text
@@ -183,6 +183,7 @@ The v1 release target is **Apple Silicon macOS only**. Pin and document the mini
 - `ltx-video` — video, t2v + i2v + LTX-conditioned v2v, `LTXPipeline`/`LTXImageToVideoPipeline`/`LTXConditionPipeline`, `Lightricks/LTX-Video`; pin an exact compatible checkpoint and revision rather than following the repository's moving default.
 - `wan2.1-1.3b` — video, t2v only, `WanPipeline`, `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
 - `wan2.1-14b` — video, t2v + i2v, `WanPipeline`/`WanImageToVideoPipeline`, separate t2v/i2v repos — **experimental**, with a loud UI warning that 48GB unified memory may still be insufficient. Its inclusion is conditional on a measured Stage 3 strategy (offload and/or staged loading, attention slicing, VAE slicing/tiling) producing a valid output without destabilizing the app; otherwise it remains unavailable rather than shipping as a broken chip.
+- `wan2.2-ti2v-5b` — video, t2v + i2v, `WanPipeline`/`WanImageToVideoPipeline`, `Wan-AI/Wan2.2-TI2V-5B-Diffusers` at `bfbd0086538bbf9b0f7c1f1939879d65e1f872ce` — **experimental test-only**, with the measured text-to-video profile available on this Mac; its Diffusers quality gate failed and Image → Video remains unavailable until separately validated.
 
 Each entry carries: exact repository and revision; pipeline class and supported modes; license/profile; access requirement; expected download/cache size; tested macOS/PyTorch/diffusers tuple; tested dtype/offload strategy; valid aspect-ratio/resolution presets; native FPS; valid frame counts and their displayed-duration mapping; Draft/Balanced/High generation recipes; Advanced step/guidance ranges; supported export/interpolation targets; and download/install state. Constraints are enforced independently in the UI, Rust command layer, and Python worker.
 
@@ -313,6 +314,7 @@ v1 uses manual signed-DMG updates: installing a newer app must leave Application
   - Implement gated-model authentication through the selected macOS-protected credential store; verify tokens never enter argv, IPC responses, logs, output metadata, crash reports, or the webview.
   - Add Wan2.1-1.3B and validate text-to-video.
   - Attempt Wan2.1-14B only with explicit download approval and a stated memory strategy; leave it unavailable if the gate fails.
+  - Keep Wan2.2 TI2V-5B as an explicitly experimental test option; the measured text-to-video profile is selectable locally, while runtime quality approval and Image → Video remain separate gates.
   - `FLUX.1-dev` is optional and belongs only to the personal/research profile after license acceptance; it is not a prerequisite for later stages.
   - For every model, record revision, actual disk use, first-run time, steady-state generation time, peak memory, valid mode/aspect-ratio/resolution/duration combinations, exact quality recipes, native FPS, canonical encoder facts, and compatible export profiles. Presets are per model; never copy LTX values blindly to FLUX or Wan.
   - Run a separate frame-interpolation feasibility gate on at least two representative generated clips. Pin and disclose the candidate implementation/model, then measure artifacts, true output FPS/frame cadence, audio sync, duration, memory, time, cancellation, and frozen-app packaging. Expose only targets that pass; if none pass, keep `Native` as the sole honest FPS choice and record the gate as failed rather than duplicating frames.

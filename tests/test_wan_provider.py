@@ -7,6 +7,20 @@ from worker.providers.wan import WanProviderError, WanT2VProvider
 
 
 class WanProviderTests(unittest.TestCase):
+    def test_wan22_provider_uses_its_registry_identity_and_balanced_profile(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "measured-profile.json"
+            path.write_text(json.dumps({
+                "width": 256, "height": 256, "frames": 9, "fps": 8,
+                "steps": 20, "guidance_scale": 5.0, "dtype": "bfloat16",
+                "estimated_disk_bytes": 34_000_000_000, "peak_rss_bytes": 1,
+                "peak_mps_allocated_bytes": 1,
+            }))
+            provider = WanT2VProvider(root / "snapshot", path, model_id="wan2.2-ti2v-5b")
+            self.assertEqual(provider.facts.provider_id, "wan2.2-ti2v-5b")
+            self.assertEqual(provider.measured_recipes().recipes["Balanced"].frames, 9)
+
     def test_rejects_missing_or_invalid_measured_profile(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
