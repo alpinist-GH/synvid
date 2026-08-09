@@ -6,6 +6,13 @@ python_bin=${SYNVID_PYTHON:-"$root_dir/venv/bin/python"}
 resource_dir="$root_dir/app/src-tauri/resources/worker"
 work_dir="$root_dir/build/pyinstaller"
 
+# transformers' Auto* classes (video/image processors, tokenizers, configs)
+# resolve each model's module via a runtime-built importlib.import_module()
+# string, which PyInstaller's static analysis cannot trace. Without
+# --collect-submodules, only per-model files that happen to be imported
+# elsewhere in the traced graph get bundled, silently dropping others (e.g.
+# transformers/models/qwen2_vl/video_processing_qwen2_vl.py) and breaking
+# AutoVideoProcessor resolution only in the frozen build.
 PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
     --noconfirm \
     --clean \
@@ -29,6 +36,7 @@ PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
     --collect-all language_tags \
     --collect-all requests \
     --collect-data transformers \
+    --collect-submodules transformers.models \
     "$root_dir/packaging/worker_launcher.py"
 
 worker_bin="$resource_dir/synvid-worker/synvid-worker"

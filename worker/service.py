@@ -175,6 +175,16 @@ class GenerationService:
             job_ready.wait()
             assert job is not None
             try:
+                # Each provider caches its pipeline until explicitly unloaded, so
+                # switching models mid-session (e.g. a generate followed by an
+                # edit_image on a different provider) would otherwise try to hold
+                # both resident at once. Measured: flux-schnell's ~31 GiB plus
+                # qwen-image-edit's ~58 GiB exceeds the ~64 GiB MPS ceiling.
+                for other_id, other_provider in self._providers.items():
+                    if other_id != provider.facts.provider_id:
+                        other_provider.unload()
+                if self.narrator is not None:
+                    self.narrator.unload()
                 with self.reservations.hold(self._estimates[provider.facts.provider_id]):
                     output_paths = allocate(self.paths.outputs)
                     request = OperationRequest(operation_id=output_paths.output_id, output_dir=output_paths.partial_dir, **request_values)
