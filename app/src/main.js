@@ -35,6 +35,13 @@ const error = $("#form-error");
 const generationProgress = $("#generation-progress");
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
+function setWorkspaceTab(name) {
+  for (const button of document.querySelectorAll("[data-workspace-tab]")) {
+    const selected = button.dataset.workspaceTab === name;
+    button.setAttribute("aria-selected", String(selected));
+    $("#" + button.getAttribute("aria-controls")).hidden = !selected;
+  }
+}
 function stopWalkthrough() {
   document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
   $("#walkthrough").hidden = true;
@@ -44,6 +51,8 @@ function renderWalkthrough() {
   const target = document.querySelector(step.target);
   document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
   if (target) {
+    const panel = target.closest(".workspace-panel");
+    if (panel) setWorkspaceTab(panel.id.replace("-panel", ""));
     target.classList.add("walkthrough-target");
     target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   }
@@ -127,6 +136,7 @@ function promoteVariant(variant) {
   $("#image-edit-controls").hidden = variant.mediaFile !== "image.png";
   $("#video-edit-controls").hidden = true;
   $("#voice-controls").hidden = true;
+  setWorkspaceTab("review");
   void previewVariant(variant);
   renderVariants();
 }
@@ -335,6 +345,7 @@ $("#complete-onboarding").addEventListener("click", () => { localStorage.setItem
 $("#download-required-model").addEventListener("click", () => void downloadRequiredModel());
 $("#required-model-not-now").addEventListener("click", () => $("#required-model-dialog").close());
 $("#start-walkthrough").addEventListener("click", startWalkthrough);
+for (const button of document.querySelectorAll("[data-workspace-tab]")) button.addEventListener("click", () => setWorkspaceTab(button.dataset.workspaceTab));
 $("#walkthrough-back").addEventListener("click", () => { if (walkthroughIndex > 0) { walkthroughIndex -= 1; renderWalkthrough(); } });
 $("#walkthrough-next").addEventListener("click", () => { if (walkthroughIndex === WALKTHROUGH_STEPS.length - 1) stopWalkthrough(); else { walkthroughIndex += 1; renderWalkthrough(); } });
 $("#walkthrough-close").addEventListener("click", stopWalkthrough);

@@ -10,57 +10,71 @@
   <body>
     <main aria-labelledby="app-title">
       <aside class="sidebar" aria-label="Primary navigation">
-        <h1 id="app-title">SynVid</h1>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">✦</span><h1 id="app-title">SynVid</h1></div>
         <nav aria-label="Workspace">
-          <button class="nav-item" aria-current="page" type="button">Create</button>
-          <button id="story-button" class="nav-item" type="button">Story</button>
-          <button id="library-button" class="nav-item" type="button">Library</button>
+          <button class="nav-item" aria-current="page" type="button"><span class="nav-icon aqua" aria-hidden="true">✦</span>Create</button>
+          <button id="story-button" class="nav-item" type="button"><span class="nav-icon violet" aria-hidden="true">▣</span>Story</button>
+          <button id="library-button" class="nav-item" type="button"><span class="nav-icon coral" aria-hidden="true">◫</span>Library</button>
         </nav>
         <div class="sidebar-footer">
-          <button id="settings-button" class="nav-item" type="button">Settings</button>
-          <button id="about-button" class="nav-item" type="button">About SynVid</button>
-          <button id="recovery-button" class="nav-item" type="button">Recovery Center</button>
+          <button id="settings-button" class="nav-item" type="button"><span class="nav-icon amber" aria-hidden="true">⚙</span>Settings</button>
+          <button id="about-button" class="nav-item" type="button"><span class="nav-icon blue" aria-hidden="true">ⓘ</span>About SynVid</button>
+          <button id="recovery-button" class="nav-item" type="button"><span class="nav-icon pink" aria-hidden="true">↻</span>Recovery Center</button>
         </div>
       </aside>
 
       <section class="compose" aria-labelledby="compose-title">
         <header class="panel-heading">
-          <div><p class="eyebrow">CREATE VIDEO</p><h2 id="compose-title">Compose</h2></div>
+          <div><p class="eyebrow">LOCAL VIDEO STUDIO</p><h2 id="compose-title">Create</h2></div>
           <p id="connection" class="status" role="status" aria-live="polite">Connecting to worker…</p>
         </header>
-        <label for="prompt">Describe your video</label>
-        <textarea id="prompt" maxlength="4000" placeholder="A yellow flower gently moving in a spring breeze" autofocus></textarea>
-        <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
+        <div class="workspace-tabs" role="tablist" aria-label="Create workspace">
+          <button id="compose-tab" class="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="compose-panel" data-workspace-tab="compose"><span aria-hidden="true">✦</span>Compose</button>
+          <button id="review-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="review-panel" data-workspace-tab="review"><span aria-hidden="true">◉</span>Review</button>
+          <button id="refine-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="refine-panel" data-workspace-tab="refine"><span aria-hidden="true">✧</span>Refine</button>
+        </div>
 
-        <section class="generation-guide" aria-labelledby="generation-guide-title">
-          <div><h3 id="generation-guide-title">Create a video in 3 steps</h3><button id="start-walkthrough" class="text-button" type="button">Start walkthrough</button></div>
-          <ol><li><strong>Describe it</strong><span>Write what you want to see.</span></li><li><strong>Choose a recipe</strong><span>Balanced is the recommended starting point.</span></li><li><strong>Generate and review</strong><span>Play the result, then keep, export, or try another variant.</span></li></ol>
-        </section>
+        <div id="compose-panel" class="workspace-panel" role="tabpanel" aria-labelledby="compose-tab">
+          <label for="prompt">Describe your video</label>
+          <textarea id="prompt" maxlength="4000" placeholder="A yellow flower gently moving in a spring breeze" autofocus></textarea>
+          <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
+          <fieldset>
+            <legend>Generation mode</legend>
+            <div class="chips" role="radiogroup" aria-label="Generation mode">
+              <button type="button" class="chip selected" data-mode="text" role="radio" aria-checked="true">Text to video</button>
+              <button type="button" class="chip" data-mode="image" role="radio" aria-checked="false" aria-describedby="image-note">Image to video</button>
+            </div>
+            <p id="image-note" class="field-help">Choose an image using the native picker. SynVid copies it into its own temporary workspace; the original is not altered.</p>
+            <button id="choose-image" class="secondary" type="button" hidden>Choose source image</button>
+            <p id="source-image-status" class="field-help" hidden>No source image selected.</p>
+          </fieldset>
+          <section class="generation-guide" aria-labelledby="generation-guide-title">
+            <div><h3 id="generation-guide-title">A simple local workflow</h3><button id="start-walkthrough" class="text-button" type="button">Walkthrough</button></div>
+            <ol><li><strong>Describe</strong><span>Set the subject, movement, and visual style.</span></li><li><strong>Generate</strong><span>Use a measured recipe in the controls.</span></li><li><strong>Review</strong><span>Keep, export, or refine your result.</span></li></ol>
+          </section>
+        </div>
 
-        <fieldset>
-          <legend>Generation mode</legend>
-          <div class="chips" role="radiogroup" aria-label="Generation mode">
-            <button type="button" class="chip selected" data-mode="text" role="radio" aria-checked="true">Text to video</button>
-            <button type="button" class="chip" data-mode="image" role="radio" aria-checked="false" aria-describedby="image-note">Image to video</button>
-          </div>
-          <p id="image-note" class="field-help">Choose an image using the native picker. SynVid copies it into its own temporary workspace; the original is not altered.</p>
-          <button id="choose-image" class="secondary" type="button" hidden>Choose source image</button>
-          <p id="source-image-status" class="field-help" hidden>No source image selected.</p>
-        </fieldset>
+        <div id="review-panel" class="workspace-panel" role="tabpanel" aria-labelledby="review-tab" hidden>
+          <section class="variants" aria-labelledby="variants-title">
+            <div class="section-heading"><h3 id="variants-title">Variants</h3><p id="variant-note">No generated variants yet.</p></div>
+            <ol id="variant-list" class="variant-list"></ol>
+          </section>
+          <section class="result" aria-labelledby="result-title">
+            <h3 id="result-title">Current selection</h3>
+            <p id="result-message">No completed output in this window yet.</p>
+            <div id="media-preview" class="media-preview" hidden aria-live="polite">
+              <video id="video-preview" controls playsinline preload="metadata" hidden aria-label="Selected generated video"></video>
+              <img id="image-preview" hidden alt="Selected generated image" />
+              <p id="preview-status" class="field-help"></p>
+            </div>
+          </section>
+        </div>
 
-        <section class="variants" aria-labelledby="variants-title">
-          <div class="section-heading"><h3 id="variants-title">Variants</h3><p id="variant-note">No generated variants yet.</p></div>
-          <ol id="variant-list" class="variant-list"></ol>
-        </section>
-
-        <section class="result" aria-labelledby="result-title">
-          <h3 id="result-title">Current selection</h3>
-          <p id="result-message">No completed output in this window yet.</p>
-          <div id="media-preview" class="media-preview" hidden aria-live="polite">
-            <video id="video-preview" controls playsinline preload="metadata" hidden aria-label="Selected generated video"></video>
-            <img id="image-preview" hidden alt="Selected generated image" />
-            <p id="preview-status" class="field-help"></p>
-          </div>
+        <div id="refine-panel" class="workspace-panel" role="tabpanel" aria-labelledby="refine-tab" hidden>
+          <section class="result" aria-labelledby="refine-title">
+            <h3 id="refine-title">Export and refine</h3>
+            <p class="field-help">Select a result in Review to unlock its available local tools.</p>
+          </section>
           <div id="export-controls" class="export-controls" hidden>
             <button id="edit-video" type="button">Edit video</button>
             <button id="add-voice" type="button">Add Voice</button>
@@ -93,7 +107,7 @@
             <p class="field-help">Narration replaces the selected video’s audio. Shorter speech is padded; overlong speech is rejected. Kokoro uses the installed stock voice.</p>
             <button id="generate-voice" type="button">Generate Voice</button>
           </section>
-        </section>
+        </div>
       </section>
 
       <section class="controls" aria-labelledby="controls-title">
