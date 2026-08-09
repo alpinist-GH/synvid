@@ -20,10 +20,15 @@ test -d "$app_bundle"
 
 # Tauri's resource copier omits nested framework/symlink content from a
 # PyInstaller one-folder payload. `ditto` preserves that macOS bundle layout.
+# Finder metadata is neither runtime content nor distributable payload. Remove
+# it from the generated worker tree before copying so an inherited extended
+# attribute cannot make the package build fail.
+find "$source_worker" -type f -name .DS_Store -delete
 ditto "$source_worker" "$destination_worker"
 test -x "$destination_worker/synvid-worker/synvid-worker"
 mkdir -p "$artifact_dir"
 rm -f "$dmg_path"
+find "$app_bundle" -type f -name .DS_Store -delete
 ditto "$app_bundle" "$stage_dir/SynVid.app"
 ln -s /Applications "$stage_dir/Applications"
 hdiutil create -volname SynVid -srcfolder "$stage_dir" -ov -format UDZO "$dmg_path" >/dev/null
