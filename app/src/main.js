@@ -35,6 +35,28 @@ const error = $("#form-error");
 const generationProgress = $("#generation-progress");
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
+function appConfirm(message) {
+  // WKWebView on macOS has no UIDelegate wired for window.confirm(), so it
+  // resolves falsy without ever showing anything; this dialog replaces it.
+  const dialog = $("#confirm-dialog");
+  $("#confirm-message").textContent = message;
+  return new Promise((resolve) => {
+    const finish = (confirmed) => {
+      $("#confirm-ok").removeEventListener("click", onConfirm);
+      $("#confirm-cancel").removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+      dialog.close();
+      resolve(confirmed);
+    };
+    const onConfirm = () => finish(true);
+    const onCancel = () => finish(false);
+    const onDialogCancel = (event) => { event.preventDefault(); finish(false); };
+    $("#confirm-ok").addEventListener("click", onConfirm);
+    $("#confirm-cancel").addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+    dialog.showModal();
+  });
+}
 function setWorkspaceTab(name) {
   for (const button of document.querySelectorAll("[data-workspace-tab]")) {
     const selected = button.dataset.workspaceTab === name;
@@ -243,7 +265,7 @@ async function downloadRequiredModel() {
   if (!requiredModel) return;
   const button = $("#download-required-model");
   const access = requiredModel.requires_access_confirmation ? " The publisher may require separate access approval." : "";
-  const approved = window.confirm("Download " + requiredModel.display_name + "?\n\nRevision: " + requiredModel.revision + "\nExpected size: " + requiredModel.expected_size_gib + " GB\nLicense: " + requiredModel.license + "." + access + "\n\nSynVid will begin the network transfer only after you confirm.");
+  const approved = await appConfirm("Download " + requiredModel.display_name + "?\n\nRevision: " + requiredModel.revision + "\nExpected size: " + requiredModel.expected_size_gib + " GB\nLicense: " + requiredModel.license + "." + access + "\n\nSynVid will begin the network transfer only after you confirm.");
   if (!approved) return;
   button.disabled = true;
   try {
@@ -269,7 +291,7 @@ async function showLibrary(message = "") {
       const forceRemove = document.createElement("button"); forceRemove.type = "button"; forceRemove.className = "danger"; forceRemove.textContent = "Force delete";
       const deleteOutput = async (cascade) => {
         const message = cascade ? "Force delete this generation and every generated descendant? Their media and local Library records will be permanently removed." : "Delete this completed generation from SynVid? Its media and local Library record will be permanently removed.";
-        if (!window.confirm(message)) return;
+        if (!(await appConfirm(message))) return;
         remove.disabled = true; forceRemove.disabled = true;
         try {
           const result = await invoke("delete_output", { request: { outputId: output.output_id, cascade } });
@@ -322,7 +344,7 @@ function renderModelCatalog(models) {
     if (model.installed) {
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Remove model";
       remove.addEventListener("click", async () => {
-        if (!window.confirm(`Remove ${model.display_name}? This deletes only its SynVid model files and cannot be undone.`)) return;
+        if (!(await appConfirm(`Remove ${model.display_name}? This deletes only its SynVid model files and cannot be undone.`))) return;
         remove.disabled = true;
         try { const result = await invoke("remove_model", { modelId: model.model_id }); $("#cleanup-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes)}.` : `${model.display_name} was already absent.`; await showSettings(); }
         catch (reason) { setError(String(reason)); remove.disabled = false; }
@@ -332,7 +354,7 @@ function renderModelCatalog(models) {
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download model…";
       download.addEventListener("click", async () => {
         const access = model.requires_access_confirmation ? " Access approval is required." : "";
-        const approved = window.confirm(`Download ${model.display_name}?\n\nRevision: ${model.revision}\nExpected size: ${model.expected_size_gib} GB\nLicense: ${model.license}.${access}\n\nSynVid will request a final authorization before any network transfer.`);
+        const approved = await appConfirm(`Download ${model.display_name}?\n\nRevision: ${model.revision}\nExpected size: ${model.expected_size_gib} GB\nLicense: ${model.license}.${access}\n\nSynVid will request a final authorization before any network transfer.`);
         if (!approved) return;
         download.disabled = true;
         try {
@@ -462,7 +484,7 @@ $("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); save
 setupModelButton.addEventListener("click", showSettings);
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
-$("#library-button").addEventListener("click", showLibrary); $("#settings-button").addEventListener("click", showSettings); $("#about-button").addEventListener("click", showAbout); $("#recovery-button").addEventListener("click", showRecovery);
+$("#library-button").addEventListener("click", () => showLibrary()); $("#settings-button").addEventListener("click", showSettings); $("#about-button").addEventListener("click", showAbout); $("#recovery-button").addEventListener("click", showRecovery);
 $("#story-button").addEventListener("click", showStory);
 $("#story-list").addEventListener("change", async () => { const id = $("#story-list").value; if (!id) return renderStory(null); try { renderStory(await invoke("story_get", { storyId: id })); } catch (reason) { setError(String(reason)); } });
 $("#save-story").addEventListener("click", async () => {
@@ -491,7 +513,7 @@ $("#compose-story").addEventListener("click", async () => { if (!activeStory) re
 for (const button of document.querySelectorAll(".close-dialog")) button.addEventListener("click", () => button.closest("dialog").close());
 $("#run-recovery").addEventListener("click", async () => { const button = $("#run-recovery"); button.disabled = true; try { const recovered = await invoke("recover"); $("#recovery-preview").textContent = `Recovered ${recovered.partialOutputCount ?? recovered.partial_output_count ?? 0} incomplete output(s). Completed media was not changed.`; } catch (reason) { $("#recovery-preview").textContent = `Recovery could not run: ${String(reason)}`; } finally { button.disabled = false; } });
 $("#clean-temporary").addEventListener("click", async () => {
-  if (!window.confirm("Clean SynVid temporary files? Completed outputs, stories, and models will not be deleted.")) return;
+  if (!(await appConfirm("Clean SynVid temporary files? Completed outputs, stories, and models will not be deleted."))) return;
   const button = $("#clean-temporary"); button.disabled = true;
   try { const result = await invoke("clean_temporary"); $("#cleanup-status").textContent = `Temporary files cleaned; freed ${formatBytes(result.freed_bytes)}.`; }
   catch (reason) { $("#cleanup-status").textContent = `Cleanup could not run: ${String(reason)}`; }
