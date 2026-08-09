@@ -253,7 +253,7 @@ async function showLibrary(message = "") {
         if (!window.confirm(message)) return;
         remove.disabled = true; forceRemove.disabled = true;
         try {
-          const result = await invoke("delete_output", { outputId: output.output_id, cascade });
+          const result = await invoke("delete_output", { request: { outputId: output.output_id, cascade } });
           const deletedIds = new Set(result.deleted_output_ids ?? result.deletedOutputIds ?? [output.output_id]);
           state.variants = state.variants.filter((variant) => !deletedIds.has(variant.outputId));
           if (deletedIds.has(state.selectedVariant)) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }

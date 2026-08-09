@@ -34,7 +34,7 @@ test("library deletion reports its result inside the open dialog", () => {
   assert.match(markup, /id="library-status"/);
   assert.match(source, /Could not delete this generation:/);
   assert.match(source, /Force delete/);
-  assert.match(source, /cascade \}/);
+  assert.match(source, /invoke\("delete_output", \{ request: \{ outputId: output\.output_id, cascade \} \}\)/);
   assert.match(source, /await showLibrary\(success\)/);
   assert.match(source, /Could not refresh the Library:/);
 });
