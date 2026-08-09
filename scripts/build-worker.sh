@@ -28,6 +28,7 @@ PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
     --collect-all kokoro_onnx \
     --collect-all language_tags \
     --collect-all requests \
+    --collect-data transformers \
     "$root_dir/packaging/worker_launcher.py"
 
 worker_bin="$resource_dir/synvid-worker/synvid-worker"

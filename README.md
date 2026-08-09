@@ -9,6 +9,29 @@ The project has passed the narrow Stage 1 LTX feasibility recipe recorded
 below and is implementing the broader Stage 2 app gate in [PLAN.md](PLAN.md).
 The app exposes no unmeasured generation settings.
 
+## 2026-08-09 testing pass
+
+A full stages-1-through-7 testing pass against the live installed app found
+and fixed four real bugs, and left two real, reproducible frozen-bundle-only
+defects open. See `PLAN.md`'s per-stage notes and `docs/measurements/*-2026-08-09.md`
+for full evidence. Summary:
+
+- **Fixed**: the installed `.app` was silently running a worker binary one
+  commit stale, making every model appear "not installed."
+- **Fixed**: an orphaned `multiprocessing.resource_tracker` could hold the
+  worker's stdout (and, less reliably, stderr) pipe open after the process
+  exited, delaying Rust's crash detection.
+- **Fixed**: the in-app model-download flow was broken for *any* model
+  (wrong `huggingface_hub` attribute name for the LFS checksum).
+- **Fixed**: `compose_story` failed for every multi-scene story (a
+  concat-list newline was over-escaped into literal text).
+- **Still open, frozen-bundle only**: Qwen Image Edit's `edit_image` and
+  (intermittently) `compose_story` both fail only in the packaged `.app`,
+  never from source, with root causes not yet found.
+- **Still open**: no `delete_story` capability exists despite being a named
+  Stage 7 requirement; genuine human VoiceOver/keyboard-only passes remain
+  outstanding for Stages 2, 5, and 7.
+
 ## Narration
 
 Stage 5's implementation introduces an explicit local narration descendant:

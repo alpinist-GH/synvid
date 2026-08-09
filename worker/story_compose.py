@@ -62,7 +62,7 @@ def compose_hard_cuts(story: dict, outputs: Path, destination: Path, *, target_f
             subprocess.run(command, check=True, capture_output=True, text=True)
             normalized.append(target)
         listing = destination.parent / "concat.txt"
-        listing.write_text("".join("file '" + str(path).replace("'", "'\\\\''") + "'\\n" for path in normalized))
+        listing.write_text("".join("file '" + str(path).replace("'", "'\\''") + "'\n" for path in normalized))
         subprocess.run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", "-movflags", "+faststart", str(destination)], check=True, capture_output=True, text=True)
     except (ImportError, OSError, subprocess.SubprocessError) as error:
         destination.unlink(missing_ok=True)

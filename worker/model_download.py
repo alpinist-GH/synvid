@@ -27,7 +27,10 @@ def download_model(paths: AppPaths, spec: ModelSpec, progress: Callable[[float, 
         if not isinstance(name, str) or not any(fnmatch.fnmatchcase(name, pattern) for pattern in spec.allowed_files):
             continue
         lfs = getattr(item, "lfs", None) or {}
-        digest = lfs.get("oid") if isinstance(lfs, dict) else getattr(lfs, "oid", None)
+        # huggingface_hub's BlobLfsInfo exposes the content hash as `sha256`
+        # (it is a dict subclass, so `.get` succeeds but silently returns
+        # None for the wrong key rather than raising).
+        digest = lfs.get("sha256") if isinstance(lfs, dict) else getattr(lfs, "sha256", None)
         remote.append(RemoteFile(name, digest if isinstance(digest, str) and len(digest) == 64 else None))
     if not remote or not any(item.sha256 is not None for item in remote):
         raise ModelInstallError("Pinned model manifest has no LFS checksum metadata.")

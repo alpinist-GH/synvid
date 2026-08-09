@@ -2,9 +2,35 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
-from pathlib import Path
 import sys
+
+# Torch/multiprocessing can spawn a `resource_tracker` helper process the
+# first time a semaphore-backed primitive is touched (e.g. during model
+# loading). On POSIX that helper inherits the parent's file descriptors,
+# including fd 1 - the same pipe Rust reads worker protocol replies from - and
+# fd 2, which Rust drains for diagnostics and to detect process exit. If those
+# fds still point at the real pipes when the helper forks, Rust (or any
+# harness) never sees EOF after this process exits: the helper keeps the
+# write ends open as an orphan. Move both to private fds and repoint fd 1/2 at
+# /dev/null before any provider/torch import can trigger that fork, so
+# children only ever inherit the harmless devnull descriptors.
+_protocol_stdout = os.fdopen(os.dup(1), "w", buffering=1)
+_protocol_stderr = os.fdopen(os.dup(2), "w", buffering=1)
+# Belt-and-suspenders: even a fork()-based multiprocessing child (which
+# copies the whole fd table, unlike the posix_spawn-based resource_tracker
+# launch) cannot carry a close-on-exec descriptor past its own exec().
+for _fd in (_protocol_stdout.fileno(), _protocol_stderr.fileno()):
+    _flags = fcntl.fcntl(_fd, fcntl.F_GETFD)
+    fcntl.fcntl(_fd, fcntl.F_SETFD, _flags | fcntl.FD_CLOEXEC)
+with open(os.devnull, "wb") as _devnull:
+    os.dup2(_devnull.fileno(), 1)
+    os.dup2(_devnull.fileno(), 2)
+sys.stdout = _protocol_stdout
+sys.stderr = _protocol_stderr
+
+from pathlib import Path
 import threading
 
 from .protocol import Envelope, ProtocolError, negotiate_version, parse_envelope, validate_request
