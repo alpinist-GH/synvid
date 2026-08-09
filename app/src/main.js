@@ -20,7 +20,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -33,6 +33,9 @@ const cancelButton = $("#cancel");
 const setupModelButton = $("#setup-model");
 const error = $("#form-error");
 const generationProgress = $("#generation-progress");
+const modelDownloadProgress = $("#model-download-progress");
+const modelDownloadStatus = $("#model-download-status");
+const DEBUG_LOG_WINDOW_KEY = "synvid.debug-log-window.v1";
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
 function appConfirm(message) {
@@ -109,6 +112,18 @@ function startWalkthrough() { walkthroughIndex = 0; renderWalkthrough(); }
 function renderGenerationProgress(job) {
   generationProgress.hidden = !job;
   generationProgress.value = job ? Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100) : 0;
+}
+function renderModelDownloadProgress(job) {
+  const downloading = job?.operation === "model_download" || (job && state.downloadModelJobId === (job.job_id || job.jobId));
+  modelDownloadStatus.hidden = !downloading;
+  if (!downloading) {
+    modelDownloadProgress.value = 0;
+    return;
+  }
+  const percent = Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
+  modelDownloadProgress.value = percent;
+  modelDownloadProgress.setAttribute("aria-valuetext", `${percent}%`);
+  $("#model-download-status-text").textContent = `${job.status_text || job.statusText || "Downloading model"} · ${percent}%`;
 }
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
@@ -233,15 +248,20 @@ function recordTerminal(events) {
     } else if (payload.state === "succeeded" && payload.output_id && !state.variants.some((item) => item.outputId === payload.output_id)) {
       const variant = { outputId: payload.output_id, seed: $("#seed").value, mediaFile: isImageModel() ? "image.png" : "video.mp4" };
       state.variants.unshift(variant); promoteVariant(variant); jobStatus.textContent = "Generation completed and saved atomically.";
+    } else if (payload.operation === "model_download") {
+      state.downloadModelJobId = null;
+      jobStatus.textContent = payload.error || `Model download ${payload.state}.`;
+      if (payload.state === "succeeded" && $("#settings-dialog").open) void showSettings();
     } else if (payload.state) jobStatus.textContent = payload.error || `Generation ${payload.state}.`;
   }
 }
 async function refresh() {
   try {
     const status = await invoke("worker_status"); state.connected = status.connected; state.models = status.availableModels; state.recipes = status.measuredRecipes; state.activeJob = status.activeJob;
+    if (state.activeJob?.operation === "model_download") state.downloadModelJobId = state.activeJob.job_id || state.activeJob.jobId;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
     if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
-    recordTerminal(status.events || []); updateControls(); void maybeShowRequiredModelSetup();
+    recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); void maybeShowRequiredModelSetup();
   } catch { state.connected = false; connection.textContent = "Worker unavailable"; updateControls(); }
 }
 async function maybeShowRequiredModelSetup() {
@@ -270,7 +290,8 @@ async function downloadRequiredModel() {
   button.disabled = true;
   try {
     const accepted = await invoke("download_model", { modelId: requiredModel.model_id });
-    state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Downloading " + requiredModel.display_name, progress: 0 };
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "model_download", status_text: "Downloading " + requiredModel.display_name, progress: 0 };
+    state.downloadModelJobId = state.activeJob.job_id;
     jobStatus.textContent = "Downloading " + requiredModel.display_name + "…";
     $("#required-model-dialog").close();
     updateControls();
@@ -359,7 +380,8 @@ function renderModelCatalog(models) {
         download.disabled = true;
         try {
           const accepted = await invoke("download_model", { modelId: model.model_id });
-          state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: `Downloading ${model.display_name}`, progress: 0 };
+          state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "model_download", status_text: `Downloading ${model.display_name}`, progress: 0 };
+          state.downloadModelJobId = state.activeJob.job_id;
           jobStatus.textContent = `Downloading ${model.display_name}…`;
           updateControls();
         } catch (reason) { setError(String(reason)); download.disabled = false; }
@@ -370,9 +392,19 @@ function renderModelCatalog(models) {
   }
 }
 async function showSettings() {
-  const dialog = $("#settings-dialog"); $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
+  const dialog = $("#settings-dialog"); $("#debug-log-window").checked = localStorage.getItem(DEBUG_LOG_WINDOW_KEY) === "true"; $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
   try { const { models = [] } = await invoke("model_catalog"); renderModelCatalog(models); }
   catch (reason) { $("#model-list").textContent = "Model catalog unavailable while the worker is disconnected."; setError(String(reason)); }
+}
+async function setDebugLogWindow(enabled) {
+  localStorage.setItem(DEBUG_LOG_WINDOW_KEY, String(enabled));
+  try {
+    await invoke("set_debug_log_window", { enabled });
+  } catch (reason) {
+    $("#debug-log-window").checked = !enabled;
+    localStorage.setItem(DEBUG_LOG_WINDOW_KEY, String(!enabled));
+    $("#cleanup-status").textContent = `Debug log window could not be ${enabled ? "opened" : "closed"}: ${String(reason)}`;
+  }
 }
 async function showAbout() {
   const dialog = $("#about-dialog"); $("#about-version").textContent = "Version…"; dialog.showModal();
@@ -541,6 +573,7 @@ $("#clean-temporary").addEventListener("click", async () => {
   catch (reason) { $("#cleanup-status").textContent = `Cleanup could not run: ${String(reason)}`; }
   finally { button.disabled = false; }
 });
+$("#debug-log-window").addEventListener("change", (event) => { void setDebugLogWindow(event.target.checked); });
 let diagnosticsText = "";
 $("#preview-diagnostics").addEventListener("click", async () => {
   const button = $("#preview-diagnostics"); button.disabled = true;
@@ -569,9 +602,10 @@ generateButton.addEventListener("click", async () => {
     return;
   }
   setError(); generateButton.disabled = true; jobStatus.textContent = "Submitting generation…";
-  try { const accepted = await invoke("generate", { request: { modelId: state.modelId, prompt, seed, recipe: state.recipe, sourceImageId: state.mode === "image" && !isImageModel() ? state.sourceImageId : null } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
+  try { const accepted = await invoke("generate", { request: { modelId: state.modelId, prompt, seed, recipe: state.recipe, sourceImageId: state.mode === "image" && !isImageModel() ? state.sourceImageId : null } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "job", status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
   catch (reason) { setError(String(reason)); jobStatus.textContent = "Generation was not started."; }
   updateControls();
 });
 cancelButton.addEventListener("click", async () => { if (!state.activeJob) return; cancelButton.disabled = true; jobStatus.textContent = "Cancelling generation…"; try { await invoke("cancel", { jobId: state.activeJob.job_id || state.activeJob.jobId }); } catch (reason) { setError(String(reason)); } finally { cancelButton.disabled = false; } });
 void refresh(); window.setInterval(() => void refresh(), 750);
+if (localStorage.getItem(DEBUG_LOG_WINDOW_KEY) === "true") void invoke("set_debug_log_window", { enabled: true }).catch(() => {});

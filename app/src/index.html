@@ -184,6 +184,16 @@
       <h2 id="settings-title">Settings</h2>
       <p class="field-help">Models are stored only in SynVid Application Support. SynVid starts without a Hugging Face account or API token. Downloads always require a separate license, size, and revision confirmation.</p>
       <section aria-labelledby="models-title"><h3 id="models-title">Local AI models</h3><div id="model-list" class="model-list" aria-live="polite">Loading model catalog…</div></section>
+      <section id="model-download-status" class="model-download-status" hidden aria-labelledby="model-download-title">
+        <h3 id="model-download-title">Model download</h3>
+        <p id="model-download-status-text" class="field-help" role="status" aria-live="polite"></p>
+        <progress id="model-download-progress" max="100" value="0" aria-label="Model download progress"></progress>
+      </section>
+      <section class="debug-settings" aria-labelledby="debug-settings-title">
+        <h3 id="debug-settings-title">Developer tools</h3>
+        <label class="setting-row" for="debug-log-window"><input id="debug-log-window" type="checkbox" /> Show the debug log window</label>
+        <p class="field-help">When enabled, SynVid opens a separate local window with the latest bounded worker diagnostics. Log lines are redacted before display.</p>
+      </section>
       <section class="temporary-cleanup" aria-labelledby="temporary-title">
         <h3 id="temporary-title">Temporary files</h3>
         <p class="field-help">Remove imported copies, interrupted-work files, and temporary render data. Completed outputs, stories, and installed models are not affected.</p>

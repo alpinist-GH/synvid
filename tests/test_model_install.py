@@ -4,11 +4,29 @@ import unittest
 from pathlib import Path
 
 from worker.model_install import ModelInstallError, RemoteFile, install_snapshot
+from worker.model_download import _ByteProgress
 from worker.models import REGISTRY
 from worker.paths import AppPaths
 
 
 class ModelInstallTests(unittest.TestCase):
+    def test_byte_progress_aggregates_concurrent_download_bars(self):
+        updates = []
+        tracker = _ByteProgress(200, lambda fraction, text: updates.append((fraction, text)))
+        first = object()
+        second = object()
+        tracker.register(first, 100)
+        tracker.register(second, 100)
+
+        tracker.update(first, 50)
+        tracker.update(second, 25)
+        self.assertAlmostEqual(updates[-1][0], 0.3575)
+        self.assertIn("Downloading model files", updates[-1][1])
+
+        tracker.update(first, 100)
+        tracker.update(second, 100)
+        self.assertLessEqual(updates[-1][0], 0.92)
+
     def test_promotes_only_a_checksum_verified_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths.under(Path(temp))
@@ -21,7 +39,7 @@ class ModelInstallTests(unittest.TestCase):
             result = install_snapshot(
                 paths,
                 REGISTRY["flux-schnell"],
-                [RemoteFile("model_index.json", hashlib.sha256(content).hexdigest())],
+                [RemoteFile("model_index.json", hashlib.sha256(content).hexdigest(), len(content))],
                 download,
             )
 

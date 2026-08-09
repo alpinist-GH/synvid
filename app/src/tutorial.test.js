@@ -46,3 +46,11 @@ test("experimental Wan models are selectable for local testing", () => {
   assert.match(source, /Ready for experimental Wan 2\.2 testing/);
   assert.match(source, /modes\.includes\("text"\)/);
 });
+
+test("model downloads expose byte progress and an opt-in debug log window", async () => {
+  assert.match(markup, /id="model-download-progress"/);
+  assert.match(markup, /id="debug-log-window"/);
+  assert.match(source, /operation === "model_download"/);
+  assert.match(source, /set_debug_log_window/);
+  assert.match(await readFile(new URL("./debug-log.html", import.meta.url), "utf8"), /id="debug-log-lines"/);
+});

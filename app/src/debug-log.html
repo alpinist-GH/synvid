@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self'; script-src 'self'" />
+    <title>SynVid Debug Log</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="debug-log-body">
+    <main class="debug-log-main" aria-labelledby="debug-log-title">
+      <header class="debug-log-header"><div><p class="eyebrow">LOCAL DIAGNOSTICS</p><h1 id="debug-log-title">Debug log</h1></div><p id="debug-log-state" class="status" role="status" aria-live="polite">Connecting…</p></header>
+      <pre id="debug-log-lines" class="debug-log-lines" tabindex="0" aria-label="Recent worker debug log">Waiting for worker diagnostics…</pre>
+    </main>
+    <script type="module" src="/debug-log.js"></script>
+  </body>
+</html>

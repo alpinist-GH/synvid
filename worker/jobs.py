@@ -30,6 +30,7 @@ class BusyError(RuntimeError):
 @dataclass
 class Job:
     job_id: str
+    operation: str = "job"
     state: JobState = JobState.RUNNING
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str | None = None
@@ -45,11 +46,11 @@ class JobController:
         self._current: Job | None = None
         self._jobs: dict[str, Job] = {}
 
-    def submit(self, runner: Callable[[Callable[[float, str], None], Callable[[], bool]], None]) -> Job:
+    def submit(self, runner: Callable[[Callable[[float, str], None], Callable[[], bool]], None], operation: str = "job") -> Job:
         with self._lock:
             if self._current is not None:
                 raise BusyError(self._current.job_id)
-            job = Job(job_id=str(uuid.uuid4()))
+            job = Job(job_id=str(uuid.uuid4()), operation=operation)
             self._current = job
             self._jobs[job.job_id] = job
         threading.Thread(target=self._run, args=(job, runner), daemon=True).start()

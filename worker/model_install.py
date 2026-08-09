@@ -25,6 +25,7 @@ class RemoteFile:
 
     name: str
     sha256: str | None
+    size: int | None = None
 
 
 class ModelInstallError(RuntimeError):

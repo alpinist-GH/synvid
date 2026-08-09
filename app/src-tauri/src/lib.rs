@@ -5,6 +5,7 @@ use std::io::Read;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod worker;
 use worker::{SupervisorState, WorkerSupervisor};
@@ -713,11 +714,23 @@ fn model_catalog(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Resul
 }
 
 #[tauri::command]
-fn download_model(model_id: String, supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
-    if model_id.len() > 64 || !model_id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-') {
+fn download_model(
+    model_id: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if model_id.len() > 64
+        || !model_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
         return Err("Invalid model download request.".into());
     }
-    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("download_model", json!({"model_id": model_id}))?)
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request("download_model", json!({"model_id": model_id}))?,
+    )
 }
 
 #[tauri::command]
@@ -993,6 +1006,51 @@ fn export_diagnostics(text: String) -> Result<Value, String> {
     }
     fs::remove_file(&temporary).map_err(|_| "Could not finalize the diagnostic export.")?;
     Ok(json!({"saved": true}))
+}
+
+#[tauri::command]
+fn debug_log(
+    app: tauri::AppHandle,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    let home = app.path().home_dir().ok();
+    let supervisor = supervisor.lock().expect("worker supervisor lock poisoned");
+    Ok(json!({
+        "lines": supervisor
+            .recent_stderr_lines()
+            .iter()
+            .map(|line| redact_diagnostic_line(line, home.as_deref()))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+#[tauri::command]
+fn set_debug_log_window(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
+    if !enabled {
+        if let Some(window) = app.get_webview_window("debug-log") {
+            window
+                .close()
+                .map_err(|error| format!("could not close debug log window: {error}"))?;
+        }
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window("debug-log") {
+        window
+            .show()
+            .map_err(|error| format!("could not show debug log window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("could not focus debug log window: {error}"))?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "debug-log", WebviewUrl::App("debug-log.html".into()))
+        .title("SynVid Debug Log")
+        .inner_size(760.0, 480.0)
+        .min_inner_size(520.0, 260.0)
+        .resizable(true)
+        .build()
+        .map(|_| ())
+        .map_err(|error| format!("could not open debug log window: {error}"))
 }
 
 fn is_supported_image(path: &std::path::Path) -> Result<bool, String> {
@@ -1286,6 +1344,8 @@ pub fn run() {
             choose_story_project,
             diagnostic_bundle,
             export_diagnostics,
+            debug_log,
+            set_debug_log_window,
             cancel
         ])
         .run(tauri::generate_context!())
@@ -1300,7 +1360,8 @@ mod diagnostic_tests {
     #[test]
     fn redacts_home_directory_and_token() {
         let home = Path::new("/Users/alpinist");
-        let line = "downloading with token hf_ABCDEFGHIJKLMNOPQRSTuvwxyz from /Users/alpinist/Library";
+        let line =
+            "downloading with token hf_ABCDEFGHIJKLMNOPQRSTuvwxyz from /Users/alpinist/Library";
         let redacted = redact_diagnostic_line(line, Some(home));
         assert!(!redacted.contains("/Users/alpinist"));
         assert!(!redacted.contains("hf_ABCDEFGHIJKLMNOPQRSTuvwxyz"));

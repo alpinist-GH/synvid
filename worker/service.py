@@ -460,7 +460,7 @@ class GenerationService:
             with self.reservations.hold(Estimate(int(spec.expected_size_gib * 1024**3), True)):
                 result = download_model(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
                 self._job_results[job.job_id] = {"model_install": result}
-        job = self.jobs.submit(runner); job_ready.set(); self._watch_terminal(job, on_terminal)
+        job = self.jobs.submit(runner, operation="model_download"); job_ready.set(); self._watch_terminal(job, on_terminal)
         return job
 
     def remove_model(self, model_id: str) -> dict:
@@ -1087,7 +1087,7 @@ class GenerationService:
     @staticmethod
     def _job_payload(job: Job) -> dict:
         return {
-            "job_id": job.job_id, "state": job.state.value, "progress": job.progress,
+            "job_id": job.job_id, "operation": job.operation, "state": job.state.value, "progress": job.progress,
             "status_text": job.status_text, "error": job.error, "created_at": job.created_at,
             "finished_at": job.finished_at,
         }

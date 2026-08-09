@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Minimal SynVid webview permissions",
-  "windows": ["main"],
+  "windows": ["main", "debug-log"],
   "permissions": ["core:default"]
 }
