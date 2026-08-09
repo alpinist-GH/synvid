@@ -670,6 +670,48 @@ class GenerationService:
     def get_story(self, story_id: str) -> dict:
         return self.stories.get(story_id)
 
+    def delete_story(self, payload: dict) -> dict:
+        """Remove a story project. Generated artifacts are retained by default.
+
+        Mirrors delete_output's cascade contract: the story document itself
+        is always removed (subject to the optimistic revision check), but its
+        scene/composition artifacts are only deleted when cascade=True, and
+        only when nothing else (another story, another output's lineage)
+        still needs them.
+        """
+        if self.jobs.current() is not None:
+            raise GenerationError("wait for the active job before deleting a story")
+        story_id = _required(payload, "story_id", str)
+        cascade = payload.get("cascade", False)
+        if not isinstance(cascade, bool):
+            raise GenerationError("delete_story cascade must be a boolean")
+        story = self.stories.get(story_id)
+        artifact_ids = self.stories._artifact_ids(story)
+        self.stories.delete(payload)
+        deleted_output_ids: list[str] = []
+        retained_output_ids: list[str] = []
+        freed_bytes = 0
+        for output_id in artifact_ids:
+            if cascade:
+                try:
+                    result = self.delete_output(output_id, cascade=True)
+                except GenerationError:
+                    if (self.paths.outputs / output_id).is_dir():
+                        retained_output_ids.append(output_id)
+                    continue
+                deleted_output_ids.extend(result["deleted_output_ids"])
+                freed_bytes += result["freed_bytes"]
+            else:
+                retained_output_ids.append(output_id)
+        return {
+            "deleted": True,
+            "story_id": story_id,
+            "cascade": cascade,
+            "deleted_output_ids": sorted(set(deleted_output_ids)),
+            "retained_output_ids": sorted(set(retained_output_ids) - set(deleted_output_ids)),
+            "freed_bytes": freed_bytes,
+        }
+
     def update_story(self, payload: dict) -> dict:
         return self.stories.update(payload)
 
@@ -886,11 +928,22 @@ class GenerationService:
         def runner(_progress, cancelled) -> None:
             job_ready.wait(); assert job is not None
             def make_still(scene: dict) -> str:
+                # Measured: flux-schnell's ~34 GiB peak MPS allocation plus
+                # LTX's ~30 GiB peak RSS sums past this Mac's 48 GiB unified
+                # memory. Holding both resident (as the one-shot generate/edit
+                # path already avoids via its own "unload other providers"
+                # step) pushed real physical footprint to 51+ GiB during a
+                # real render, causing severe system-wide memory pressure
+                # that stalled unrelated IPC requests for minutes.
+                if video_provider.facts.provider_id != image_provider.facts.provider_id:
+                    video_provider.unload()
                 return save(image_provider, {"capability": Capability.IMAGE_GENERATION, "prompt": scene["prompt"], "seed": 0, "width": image_profile.width, "height": image_profile.height, "frames": 1, "fps": 1, "steps": image_profile.steps, "guidance_scale": image_profile.guidance_scale, "recipe": "Measured"}, {})
             def make_clip(scene: dict, still_id: str) -> str:
                 source = self.paths.outputs / still_id / "image.png"
                 if not source.is_file():
                     raise GenerationError("current story still is unavailable")
+                if image_provider.facts.provider_id != video_provider.facts.provider_id:
+                    image_provider.unload()
                 return save(video_provider, {"capability": Capability.VIDEO_GENERATION, "prompt": scene["prompt"], "seed": 0, "width": video_profile.width, "height": video_profile.height, "frames": video_profile.frames, "fps": video_profile.fps, "steps": video_profile.steps, "guidance_scale": video_profile.guidance_scale, "recipe": "Balanced", "source_image": source, "source_output_id": still_id}, {})
             def make_narration(scene: dict, clip_id: str) -> str:
                 if self.narrator is None:

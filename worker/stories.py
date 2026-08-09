@@ -107,6 +107,22 @@ class StoryStore:
                 self._invalidate_composition(story)
             return self._advance(story)
 
+    def delete(self, payload: dict[str, object]) -> dict[str, object]:
+        """Remove one story document only. Generated artifacts always outlive it.
+
+        The caller (GenerationService.delete_story) is responsible for the
+        artifact-cascade decision: it reads this story's artifact IDs before
+        calling here, then decides per-output retention/deletion afterward,
+        the same way output deletion already treats media and story documents
+        as separately owned lifecycles.
+        """
+        story_id, expected = self._identity(payload)
+        with self._lock:
+            story = self._read(story_id)
+            self._check_revision(story, expected)
+            (self.root / f"{story_id}.json").unlink(missing_ok=True)
+            return {"story_id": story_id}
+
     def add_scene(self, payload: dict[str, object]) -> dict[str, object]:
         story_id, expected = self._identity(payload)
         with self._lock:

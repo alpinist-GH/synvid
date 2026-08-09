@@ -94,6 +94,14 @@ struct StoryUpdateRequest {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct StoryDeleteRequest {
+    story_id: String,
+    expected_revision: i64,
+    #[serde(default)]
+    cascade: bool,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StorySceneRequest {
     story_id: String,
     expected_revision: i64,
@@ -399,6 +407,25 @@ fn story_get(
             .lock()
             .expect("worker supervisor lock poisoned")
             .request("story_get", json!({"story_id": story_id}))?,
+    )
+}
+
+#[tauri::command]
+fn story_delete(
+    request: StoryDeleteRequest,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if !valid_story_id(&request.story_id) || !valid_story_revision(request.expected_revision) {
+        return Err("Invalid story deletion request.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "story_delete",
+                json!({"story_id": request.story_id, "expected_revision": request.expected_revision, "cascade": request.cascade}),
+            )?,
     )
 }
 
@@ -1112,6 +1139,7 @@ pub fn run() {
             story_create,
             story_list,
             story_get,
+            story_delete,
             story_update,
             story_add_scene,
             story_update_scene,

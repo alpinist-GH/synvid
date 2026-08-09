@@ -136,7 +136,7 @@ def write_srt(path: Path, cues: list[dict[str, object]]) -> None:
     def stamp(seconds: float) -> str:
         milliseconds = round(seconds * 1000); hours, milliseconds = divmod(milliseconds, 3_600_000); minutes, milliseconds = divmod(milliseconds, 60_000); seconds, milliseconds = divmod(milliseconds, 1000)
         return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
-    path.write_text("".join(f"{number}\\n{stamp(float(cue['start']))} --> {stamp(float(cue['end']))}\\n{str(cue['text'])}\\n\\n" for number, cue in enumerate(cues, 1)), encoding="utf-8")
+    path.write_text("".join(f"{number}\n{stamp(float(cue['start']))} --> {stamp(float(cue['end']))}\n{str(cue['text'])}\n\n" for number, cue in enumerate(cues, 1)), encoding="utf-8")
 
 
 def _write_array_wav(destination: Path, samples: object, sample_rate: int) -> None:

@@ -11,6 +11,7 @@ from worker.providers.fake import FakeProvider
 from worker.providers.base import Capability, ProviderFacts
 from worker.resources import Estimate
 from worker.service import GenerationError, GenerationService
+from worker.stories import StoryConflict, StoryError
 
 
 class GenerationServiceTests(unittest.TestCase):
@@ -164,6 +165,121 @@ class GenerationServiceTests(unittest.TestCase):
             rendered = service.get_story(story["story_id"])
             self.assertIn("still", rendered["scenes"][0]["artifacts"]); self.assertIn("clip", rendered["scenes"][0]["artifacts"])
             self.assertEqual(len(video.sources), 1); self.assertTrue(video.sources[0].is_file())
+
+    def _rendered_one_scene_story(self, temp, title):
+        class ImageProfile: width = height = 64; steps = 2; guidance_scale = 0.0
+        class VideoProfile: width = height = 64; frames = 9; fps = 8; steps = 2; guidance_scale = 1.0
+        class Recipes: recipes = {"Balanced": VideoProfile()}
+        class Image(FakeProvider):
+            facts = ProviderFacts("story-image", frozenset({Capability.IMAGE_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_profile(self): return ImageProfile()
+            def run(self, request, progress, cancelled):
+                (request.output_dir / "image.png").write_bytes(b"image"); return {"media_file": "image.png"}
+        class Video(FakeProvider):
+            facts = ProviderFacts("story-video", frozenset({Capability.VIDEO_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_recipes(self): return Recipes()
+            def run(self, request, progress, cancelled):
+                (request.output_dir / "video.mp4").write_bytes(b"video"); return {"media_file": "video.mp4"}
+        image, video = Image(), Video()
+        image.facts = Image.facts; video.facts = Video.facts
+        service = GenerationService(AppPaths.under(Path(temp)), video, Estimate(1, True), additional_providers=(image,), estimates={"story-image": Estimate(1, True)})
+        story = service.create_story({"title": title})
+        story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+        story = service.update_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": story["scenes"][0]["scene_id"], "approved": True})
+        done = threading.Event(); received = []
+        service.submit_story_render({"story_id": story["story_id"], "expected_revision": story["revision"], "through": "clip"}, lambda _job: None, lambda completed, output: (received.append((completed, output)), done.set()))
+        self.assertTrue(done.wait(2)); self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+        story = service.get_story(story["story_id"])
+        artifacts = story["scenes"][0]["artifacts"]
+        return service, story, artifacts["still"]["output_id"], artifacts["clip"]["output_id"]
+
+    def test_delete_story_by_default_retains_generated_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service, story, still_id, clip_id = self._rendered_one_scene_story(temp, "Kept media")
+            result = service.delete_story({"story_id": story["story_id"], "expected_revision": story["revision"]})
+            self.assertTrue(result["deleted"]); self.assertFalse(result["cascade"])
+            self.assertEqual(result["deleted_output_ids"], [])
+            self.assertEqual(sorted(result["retained_output_ids"]), sorted([still_id, clip_id]))
+            with self.assertRaises(StoryError):
+                service.get_story(story["story_id"])
+            self.assertTrue((service.paths.outputs / still_id).is_dir())
+            self.assertTrue((service.paths.outputs / clip_id).is_dir())
+
+    def test_delete_story_cascade_removes_unshared_artifacts_but_keeps_shared_ones(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service, story, still_id, clip_id = self._rendered_one_scene_story(temp, "Cascade me")
+            other = service.create_story({"title": "Shares the still"})
+            other = service.add_story_scene({"story_id": other["story_id"], "expected_revision": other["revision"], "prompt": "borrowed"})
+            other = service.record_story_artifact({"story_id": other["story_id"], "expected_revision": other["revision"], "scene_id": other["scenes"][0]["scene_id"], "step": "still", "output_id": still_id})
+            result = service.delete_story({"story_id": story["story_id"], "expected_revision": story["revision"], "cascade": True})
+            self.assertTrue(result["cascade"])
+            self.assertEqual(result["deleted_output_ids"], [clip_id])
+            self.assertEqual(result["retained_output_ids"], [still_id])
+            self.assertFalse((service.paths.outputs / clip_id).exists())
+            self.assertTrue((service.paths.outputs / still_id).is_dir())
+
+    def test_delete_story_rejects_stale_revision_and_busy_worker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            story = service.create_story({"title": "Conflict"})
+            with self.assertRaises(StoryConflict):
+                service.delete_story({"story_id": story["story_id"], "expected_revision": story["revision"] + 1})
+            class HangingProvider(FakeProvider):
+                def run(self, request, progress, cancelled):
+                    while not cancelled(): time.sleep(0.01)
+                    raise InterruptedError()
+            service = GenerationService(AppPaths.under(Path(temp) / "busy"), HangingProvider(), Estimate(1, True))
+            story = service.create_story({"title": "Busy"})
+            service.submit(self.PAYLOAD, lambda _job: None, lambda _job, _output: None)
+            with self.assertRaises(GenerationError):
+                service.delete_story({"story_id": story["story_id"], "expected_revision": story["revision"]})
+
+    def test_story_render_unloads_the_sibling_provider_between_still_and_clip(self):
+        # Measured: flux-schnell (~34 GiB peak MPS) plus LTX (~30 GiB peak
+        # RSS) sum past this Mac's 48 GiB unified memory. Holding both
+        # resident for the whole story render pushed real physical footprint
+        # to 51+ GiB and stalled unrelated IPC requests for minutes
+        # afterward. The render must alternate residency instead.
+        class ImageProfile: width = height = 64; steps = 2; guidance_scale = 0.0
+        class VideoProfile: width = height = 64; frames = 9; fps = 8; steps = 2; guidance_scale = 1.0
+        class Recipes: recipes = {"Balanced": VideoProfile()}
+        calls = []
+        class Image(FakeProvider):
+            facts = ProviderFacts("story-image", frozenset({Capability.IMAGE_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_profile(self): return ImageProfile()
+            def run(self, request, progress, cancelled):
+                calls.append("image-run")
+                (request.output_dir / "image.png").write_bytes(b"image"); return {"media_file": "image.png"}
+            def unload(self): calls.append("image-unload")
+        class Video(FakeProvider):
+            facts = ProviderFacts("story-video", frozenset({Capability.VIDEO_GENERATION}), "shareable", "fixture", "test", False)
+            def measured_recipes(self): return Recipes()
+            def run(self, request, progress, cancelled):
+                calls.append("video-run")
+                (request.output_dir / "video.mp4").write_bytes(b"video"); return {"media_file": "video.mp4"}
+            def unload(self): calls.append("video-unload")
+        with tempfile.TemporaryDirectory() as temp:
+            image, video = Image(), Video()
+            image.facts = Image.facts; video.facts = Video.facts
+            service = GenerationService(AppPaths.under(Path(temp)), video, Estimate(1, True), additional_providers=(image,), estimates={"story-image": Estimate(1, True)})
+            story = service.create_story({"title": "Alternating residency"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "one"})
+            story = service.add_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "prompt": "two"})
+            for scene in story["scenes"]:
+                story = service.update_story_scene({"story_id": story["story_id"], "expected_revision": story["revision"], "scene_id": scene["scene_id"], "approved": True})
+            done = threading.Event(); received = []
+            service.submit_story_render({"story_id": story["story_id"], "expected_revision": story["revision"], "through": "clip"}, lambda _job: None, lambda completed, output: (received.append((completed, output)), done.set()))
+            self.assertTrue(done.wait(2)); self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+            # Two scenes, each still followed by its clip: the sibling
+            # provider is unloaded before every step so the two never hold
+            # residency at the same time, even though the first unload calls
+            # are no-ops (nothing loaded yet).
+            self.assertEqual(calls, [
+                "video-unload", "image-run",
+                "image-unload", "video-run",
+                "video-unload", "image-run",
+                "image-unload", "video-run",
+            ])
 
     def test_image_provider_uses_its_measured_profile_and_persists_png(self):
         class Profile:

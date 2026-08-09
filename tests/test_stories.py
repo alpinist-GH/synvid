@@ -38,6 +38,18 @@ class StoryStoreTests(unittest.TestCase):
             with self.assertRaises(StoryError):
                 store.reorder({"story_id": story["story_id"], "expected_revision": changed["revision"], "scene_ids": ["missing"]})
 
+    def test_delete_removes_document_and_rejects_stale_revision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = StoryStore(Path(temp)); story = store.create({"title": "Disposable"})
+            with self.assertRaises(StoryConflict):
+                store.delete({"story_id": story["story_id"], "expected_revision": story["revision"] + 1})
+            self.assertEqual(store.get(story["story_id"])["story_id"], story["story_id"])
+            result = store.delete({"story_id": story["story_id"], "expected_revision": story["revision"]})
+            self.assertEqual(result["story_id"], story["story_id"])
+            with self.assertRaises(StoryError):
+                store.get(story["story_id"])
+            self.assertEqual(store.list(), [])
+
     def test_project_archive_is_atomic_portable_and_rejects_tampering(self):
         with tempfile.TemporaryDirectory() as temp:
             store = StoryStore(Path(temp)); story = store.create({"title": "Portable"})

@@ -387,6 +387,8 @@ function renderStory(story) {
   $("#add-story-scene").disabled = !story;
   $("#export-story-project").disabled = !story;
   $("#export-story-package").disabled = !story;
+  $("#delete-story").disabled = !story;
+  $("#delete-story-cascade").disabled = !story;
   $("#draft-story-scenes").disabled = true;
   $("#story-draft-note").textContent = STORY_PLANNER_AVAILABLE
     ? "Drafting is optional and never changes the project until you add or edit a scene."
@@ -496,6 +498,26 @@ async function exportStoryProject(selfContained) { if (!activeStory) return; try
 $("#export-story-project").addEventListener("click", () => void exportStoryProject(false));
 $("#export-story-package").addEventListener("click", () => void exportStoryProject(true));
 $("#import-story-project").addEventListener("click", async () => { try { const picked = await invoke("choose_story_project"); if (!picked.sourceProjectId) return; const story = await invoke("story_import_project", { sourceProjectId: picked.sourceProjectId }); const select = $("#story-list"); select.add(new Option(story.title, story.story_id)); select.value = story.story_id; renderStory(story); } catch (reason) { setError(String(reason)); } });
+async function deleteStory(cascade) {
+  if (!activeStory) return;
+  const message = cascade
+    ? `Delete "${activeStory.title}" and every generated still, clip, narration, and composed movie it still owns? Media shared with another story is kept.`
+    : `Delete "${activeStory.title}"? The story project is permanently removed, but its generated media stays in the Library.`;
+  if (!(await appConfirm(message))) return;
+  $("#delete-story").disabled = true; $("#delete-story-cascade").disabled = true;
+  try {
+    const result = await invoke("story_delete", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, cascade } });
+    const select = $("#story-list");
+    const option = select.querySelector(`option[value="${result.story_id}"]`);
+    if (option) option.remove();
+    select.value = "";
+    renderStory(null);
+    const freed = cascade ? ` Freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.` : "";
+    $("#story-draft-note").textContent = `Story deleted.${freed}`;
+  } catch (reason) { setError(String(reason)); $("#delete-story").disabled = !activeStory; $("#delete-story-cascade").disabled = !activeStory; }
+}
+$("#delete-story").addEventListener("click", () => void deleteStory(false));
+$("#delete-story-cascade").addEventListener("click", () => void deleteStory(true));
 $("#add-story-scene").addEventListener("click", async () => { if (!activeStory) return; try { const saved = await invoke("story_add_scene", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, prompt: $("#scene-prompt").value.trim(), narration: $("#scene-narration").value.trim() } }); $("#scene-prompt").value = ""; $("#scene-narration").value = ""; renderStory(saved); } catch (reason) { setError(String(reason)); } });
 $("#draft-story-scenes").addEventListener("click", async () => { if (!activeStory) return; const button = $("#draft-story-scenes"); button.disabled = true; $("#story-draft-note").textContent = "Drafting scenes locally…"; try { const accepted = await invoke("story_draft_scenes", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, count: 3 } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: "Drafting scenes locally", progress: 0 }; } catch (reason) { $("#story-draft-note").textContent = String(reason); button.disabled = false; } });
 $("#save-story-scene").addEventListener("click", async () => { if (!activeStory || !activeSceneId) return; const trimStart = Number($("#scene-trim-start").value); const trimEnd = Number($("#scene-trim-end").value); if (!Number.isFinite(trimStart) || !Number.isFinite(trimEnd) || trimStart < 0 || trimEnd < 0 || (trimEnd && trimEnd <= trimStart)) return setError("Shot trim times must be non-negative, with the end after the start."); try { const saved = await invoke("story_update_scene", { request: { storyId: activeStory.story_id, expectedRevision: activeStory.revision, sceneId: activeSceneId, prompt: $("#scene-prompt").value.trim(), narration: $("#scene-narration").value.trim(), approved: $("#scene-approved").checked, trimStartSeconds: trimStart, trimEndSeconds: trimEnd, narrationMuted: $("#scene-narration-muted").checked } }); renderStory(saved); } catch (reason) { setError(String(reason)); } });

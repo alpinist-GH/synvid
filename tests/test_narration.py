@@ -78,6 +78,23 @@ class NarrationTests(unittest.TestCase):
             subtitle = Path(temp) / "captions.srt"; write_srt(subtitle, cues)
             self.assertIn("00:00:00,100 --> 00:00:00,200", subtitle.read_text())
 
+    def test_write_srt_uses_real_newlines_between_multiple_cues(self):
+        # A regression test: an earlier version wrote the literal two-character
+        # sequence "\n" (backslash, n) instead of an actual line break, which
+        # produced a file no SRT player could parse. A substring-only
+        # assertion on read_text() cannot distinguish the two, so this checks
+        # the raw bytes and the exact expected block structure.
+        with tempfile.TemporaryDirectory() as temp:
+            subtitle = Path(temp) / "captions.srt"
+            write_srt(subtitle, [{"start": 0.0, "end": 1.5, "text": "First cue."}, {"start": 1.5, "end": 3.0, "text": "Second cue."}])
+            raw = subtitle.read_bytes()
+            self.assertNotIn(b"\\n", raw)
+            self.assertEqual(
+                raw.decode("utf-8"),
+                "1\n00:00:00,000 --> 00:00:01,500\nFirst cue.\n\n"
+                "2\n00:00:01,500 --> 00:00:03,000\nSecond cue.\n\n",
+            )
+
     def test_audio_replacement_uses_bundled_ffmpeg_without_a_shell(self):
         with tempfile.TemporaryDirectory() as temp, patch("imageio_ffmpeg.get_ffmpeg_exe", return_value="/fixed/ffmpeg"), patch("worker.narration.subprocess.run") as run:
             source, wav, output = (Path(temp) / name for name in ("source.mp4", "voice.wav", "output.mp4"))

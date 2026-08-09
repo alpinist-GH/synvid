@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import sys
 from typing import Callable
 
 from .stories import StoryError
@@ -66,6 +67,12 @@ def compose_hard_cuts(story: dict, outputs: Path, destination: Path, *, target_f
         subprocess.run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", "-movflags", "+faststart", str(destination)], check=True, capture_output=True, text=True)
     except (ImportError, OSError, subprocess.SubprocessError) as error:
         destination.unlink(missing_ok=True)
+        # The user-facing error is deliberately generic; the concrete ffmpeg
+        # failure (missing library, unreadable input, bad codec negotiation)
+        # only exists on stderr, which the app-owned diagnostics drain
+        # already treats as local, non-shipped output.
+        detail = getattr(error, "stderr", None) or str(error)
+        print(f"story composition failed: {error!r}: {detail}", file=sys.stderr)
         raise StoryComposeError("could not compose the story movie") from error
     if not destination.is_file() or destination.stat().st_size == 0: raise StoryComposeError("story composition produced no movie")
     return ids

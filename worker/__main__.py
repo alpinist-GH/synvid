@@ -29,6 +29,19 @@ with open(os.devnull, "wb") as _devnull:
     os.dup2(_devnull.fileno(), 2)
 sys.stdout = _protocol_stdout
 sys.stderr = _protocol_stderr
+# fd 0 (the request pipe Rust writes into) needs the same protection: measured
+# with `lsof`, the resource_tracker helper inherits fd 0 across its
+# posix_spawn just like it used to inherit fd 1/2. With two processes holding
+# the pipe's read end open, the kernel can deliver a request line to whichever
+# one happens to call read() first; if it lands in the helper (which never
+# consumes it - its own event loop only reads the tracker fd it was launched
+# with) the real request vanishes and this process's next stdin read blocks
+# forever. fd 0 does not need dup2'ing to a private number first (nothing
+# else writes directly to the raw descriptor the way stdout/stderr do);
+# marking it close-on-exec in place is enough since CLOEXEC only affects
+# inheritance across exec, not this process's own use of it.
+_stdin_flags = fcntl.fcntl(0, fcntl.F_GETFD)
+fcntl.fcntl(0, fcntl.F_SETFD, _stdin_flags | fcntl.FD_CLOEXEC)
 
 from pathlib import Path
 import threading
@@ -261,6 +274,8 @@ def serve() -> int:
                 story_id = request.payload.get("story_id")
                 if not isinstance(story_id, str): raise ProtocolError("story_get requires a story ID")
                 _reply(request, "status", service.get_story(story_id))
+            elif request.kind == "story_delete":
+                _reply(request, "status", service.delete_story(request.payload))
             elif request.kind == "story_update":
                 _reply(request, "status", service.update_story(request.payload))
             elif request.kind == "story_add_scene":
