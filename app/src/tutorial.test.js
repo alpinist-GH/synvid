@@ -13,6 +13,8 @@ test("walkthrough explains and highlights the primary creation flow", () => {
   }
   assert.match(source, /walkthrough-target/);
   assert.match(source, /scrollIntoView/);
+  assert.match(source, /positionWalkthrough/);
+  assert.match(source, /addEventListener\("scroll", repositionWalkthrough, true\)/);
 });
 
 test("the frontend has no Keychain or Hugging Face token dependency", () => {
@@ -26,4 +28,11 @@ test("missing required video setup opens an explicit download dialog", () => {
   assert.match(source, /maybeShowRequiredModelSetup/);
   assert.match(source, /model_id === "ltx-video"/);
   assert.match(markup, /Download and validate/);
+});
+
+test("library deletion reports its result inside the open dialog", () => {
+  assert.match(markup, /id="library-status"/);
+  assert.match(source, /Could not delete this generation:/);
+  assert.match(source, /Force delete/);
+  assert.match(source, /cascade \}/);
 });

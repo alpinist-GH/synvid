@@ -116,7 +116,9 @@ def serve() -> int:
             elif request.kind == "delete_output":
                 output_id = request.payload.get("output_id")
                 if not isinstance(output_id, str): raise ProtocolError("delete_output requires an output ID")
-                _reply(request, "status", service.delete_output(output_id))
+                cascade = request.payload.get("cascade", False)
+                if not isinstance(cascade, bool): raise ProtocolError("delete_output cascade must be a boolean")
+                _reply(request, "status", service.delete_output(output_id, cascade=cascade))
             elif request.kind == "recovery_preview":
                 _reply(request, "status", service.recovery_preview())
             elif request.kind == "recover":

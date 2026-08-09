@@ -168,7 +168,8 @@
     </dialog>
     <dialog id="library-dialog" aria-labelledby="library-title">
       <h2 id="library-title">Library</h2>
-      <p class="field-help">Completed local generations stay here until you delete them. Select an item to reopen it, or delete an item you no longer need.</p>
+      <p class="field-help">Completed local generations stay here until you delete them. Force delete also removes generated descendants, but never Story-referenced work.</p>
+      <p id="library-status" class="field-help" role="status" aria-live="polite"></p>
       <ol id="library-list" class="variant-list"></ol>
       <button class="secondary close-dialog" type="button">Close</button>
     </dialog>

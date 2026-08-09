@@ -472,43 +472,62 @@ class GenerationService:
         root.mkdir(parents=True, exist_ok=True)
         return {"freed_bytes": freed_bytes}
 
-    def delete_output(self, output_id: str) -> dict:
+    def delete_output(self, output_id: str, *, cascade: bool = False) -> dict:
         """Explicitly remove one unreferenced, completed owned output.
 
         Outputs are immutable while retained, but retention is not permanent.
-        Refuse a default deletion if another output or any Story still refers to
-        it; those relationships need a separate, visible cascade workflow.
+        Refuse a default deletion if another output refers to it. An explicit
+        cascade removes the complete generated-descendant tree, but never a
+        Story-referenced artifact.
         """
         if self.jobs.current() is not None:
             raise GenerationError("wait for the active job before deleting a library item")
         if not _OUTPUT_ID.fullmatch(output_id):
             raise GenerationError("output ID is invalid")
-        output_dir = self.paths.outputs / output_id
-        if output_dir.is_symlink() or not output_dir.is_dir():
-            raise GenerationError("library item is unavailable")
-        if self._output_has_descendants(output_id):
+        output_ids = self._output_descendant_ids(output_id)
+        if len(output_ids) > 1 and not cascade:
             raise GenerationError("this item has generated descendants and cannot be deleted here")
-        if self._story_references_output(output_id):
-            raise GenerationError("this item is used by a Story and cannot be deleted here")
-        freed_bytes = self._tree_size(output_dir)
-        shutil.rmtree(output_dir)
-        self.store.remove_output(output_id)
-        return {"deleted": True, "output_id": output_id, "freed_bytes": freed_bytes}
+        for item_id in output_ids:
+            output_dir = self.paths.outputs / item_id
+            if output_dir.is_symlink() or not output_dir.is_dir():
+                raise GenerationError("library item is unavailable")
+            if self._story_references_output(item_id):
+                raise GenerationError("this item or one of its descendants is used by a Story and cannot be deleted here")
+        freed_bytes = sum(self._tree_size(self.paths.outputs / item_id) for item_id in output_ids)
+        for item_id in output_ids:
+            shutil.rmtree(self.paths.outputs / item_id)
+            self.store.remove_output(item_id)
+        return {"deleted": True, "output_id": output_id, "deleted_output_ids": output_ids, "freed_bytes": freed_bytes}
 
     def _output_has_descendants(self, output_id: str) -> bool:
+        return len(self._output_descendant_ids(output_id)) > 1
+
+    def _output_descendant_ids(self, output_id: str) -> list[str]:
+        """Return an output and every transitive generated descendant."""
         connection = self.store.open()
         try:
             rows = connection.execute("SELECT metadata_json FROM outputs WHERE output_id != ?", (output_id,)).fetchall()
         finally:
             connection.close()
+        lineage_by_output: dict[str, list[dict]] = {}
         for (raw,) in rows:
             try:
-                lineage = json.loads(raw).get("lineage", [])
-                if any(item.get("output_id") == output_id for item in lineage if isinstance(item, dict)):
-                    return True
+                metadata = json.loads(raw)
+                item_id = metadata.get("output_id")
+                lineage = metadata.get("lineage", [])
+                if isinstance(item_id, str) and isinstance(lineage, list):
+                    lineage_by_output[item_id] = [item for item in lineage if isinstance(item, dict)]
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
-        return False
+        selected = [output_id]
+        known = {output_id}
+        while True:
+            additions = [item_id for item_id, lineage in lineage_by_output.items()
+                         if item_id not in known and any(item.get("output_id") in known for item in lineage)]
+            if not additions:
+                return selected
+            selected.extend(additions)
+            known.update(additions)
 
     def _story_references_output(self, output_id: str) -> bool:
         for summary in self.stories.list():

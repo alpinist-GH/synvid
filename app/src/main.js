@@ -46,6 +46,25 @@ function stopWalkthrough() {
   document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
   $("#walkthrough").hidden = true;
 }
+function positionWalkthrough(target) {
+  const walkthrough = $("#walkthrough");
+  if (walkthrough.hidden || !target) return;
+  const gap = 16;
+  const targetBounds = target.getBoundingClientRect();
+  const popupBounds = walkthrough.getBoundingClientRect();
+  const canPlaceRight = window.innerWidth - targetBounds.right >= popupBounds.width + gap;
+  const canPlaceLeft = targetBounds.left >= popupBounds.width + gap;
+  let left = canPlaceRight ? targetBounds.right + gap : canPlaceLeft ? targetBounds.left - popupBounds.width - gap : Math.max(gap, Math.min(targetBounds.left, window.innerWidth - popupBounds.width - gap));
+  let top = targetBounds.top + (targetBounds.height - popupBounds.height) / 2;
+  if (!canPlaceRight && !canPlaceLeft) top = targetBounds.bottom + gap;
+  top = Math.max(gap, Math.min(top, window.innerHeight - popupBounds.height - gap));
+  left = Math.max(gap, Math.min(left, window.innerWidth - popupBounds.width - gap));
+  walkthrough.style.left = `${Math.round(left)}px`;
+  walkthrough.style.top = `${Math.round(top)}px`;
+}
+function repositionWalkthrough() {
+  if (!$("#walkthrough").hidden) positionWalkthrough(document.querySelector(WALKTHROUGH_STEPS[walkthroughIndex].target));
+}
 function renderWalkthrough() {
   const step = WALKTHROUGH_STEPS[walkthroughIndex];
   const target = document.querySelector(step.target);
@@ -62,6 +81,7 @@ function renderWalkthrough() {
   $("#walkthrough-copy").textContent = step.copy;
   $("#walkthrough-back").disabled = walkthroughIndex === 0;
   $("#walkthrough-next").textContent = walkthroughIndex === WALKTHROUGH_STEPS.length - 1 ? "Finish" : "Next";
+  requestAnimationFrame(() => requestAnimationFrame(() => positionWalkthrough(target)));
 }
 function startWalkthrough() { walkthroughIndex = 0; renderWalkthrough(); }
 function renderGenerationProgress(job) {
@@ -219,7 +239,7 @@ async function downloadRequiredModel() {
   }
 }
 async function showLibrary() {
-  const dialog = $("#library-dialog"); const list = $("#library-list"); list.replaceChildren();
+  const dialog = $("#library-dialog"); const list = $("#library-list"); const status = $("#library-status"); list.replaceChildren(); status.textContent = "";
   try {
     const { outputs = [] } = await invoke("list_outputs");
     for (const output of outputs) {
@@ -227,18 +247,23 @@ async function showLibrary() {
       const select = document.createElement("button"); select.type = "button"; select.className = "variant"; select.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`;
       select.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown", mediaFile: output.media_file }); dialog.close(); });
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete";
-      remove.addEventListener("click", async () => {
-        if (!window.confirm("Delete this completed generation from SynVid? Its media and local Library record will be permanently removed.")) return;
-        remove.disabled = true;
+      const forceRemove = document.createElement("button"); forceRemove.type = "button"; forceRemove.className = "danger"; forceRemove.textContent = "Force delete";
+      const deleteOutput = async (cascade) => {
+        const message = cascade ? "Force delete this generation and every generated descendant? Their media and local Library records will be permanently removed." : "Delete this completed generation from SynVid? Its media and local Library record will be permanently removed.";
+        if (!window.confirm(message)) return;
+        remove.disabled = true; forceRemove.disabled = true;
         try {
-          const result = await invoke("delete_output", { outputId: output.output_id });
-          state.variants = state.variants.filter((variant) => variant.outputId !== output.output_id);
-          if (state.selectedVariant === output.output_id) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }
-          renderVariants(); await showLibrary();
-          $("#result-message").textContent = `Deleted local generation and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
-        } catch (reason) { setError(String(reason)); remove.disabled = false; }
-      });
-      item.append(select, remove); list.append(item);
+          const result = await invoke("delete_output", { outputId: output.output_id, cascade });
+          const deletedIds = new Set(result.deleted_output_ids ?? result.deletedOutputIds ?? [output.output_id]);
+          state.variants = state.variants.filter((variant) => !deletedIds.has(variant.outputId));
+          if (deletedIds.has(state.selectedVariant)) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }
+          renderVariants(); await showLibrary(); const count = deletedIds.size; status.textContent = `Deleted ${count} local generation${count === 1 ? "" : "s"} and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
+          $("#result-message").textContent = status.textContent;
+        } catch (reason) { status.textContent = `Could not delete this generation: ${String(reason)}.`; remove.disabled = false; forceRemove.disabled = false; }
+      };
+      remove.addEventListener("click", () => { void deleteOutput(false); });
+      forceRemove.addEventListener("click", () => { void deleteOutput(true); });
+      item.append(select, remove, forceRemove); list.append(item);
     }
     if (!outputs.length) list.textContent = "No completed local outputs yet.";
   } catch { list.textContent = "The local library is unavailable while the worker is disconnected."; }
@@ -349,6 +374,8 @@ for (const button of document.querySelectorAll("[data-workspace-tab]")) button.a
 $("#walkthrough-back").addEventListener("click", () => { if (walkthroughIndex > 0) { walkthroughIndex -= 1; renderWalkthrough(); } });
 $("#walkthrough-next").addEventListener("click", () => { if (walkthroughIndex === WALKTHROUGH_STEPS.length - 1) stopWalkthrough(); else { walkthroughIndex += 1; renderWalkthrough(); } });
 $("#walkthrough-close").addEventListener("click", stopWalkthrough);
+window.addEventListener("resize", repositionWalkthrough);
+window.addEventListener("scroll", repositionWalkthrough, true);
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });

@@ -101,6 +101,14 @@ class GenerationServiceTests(unittest.TestCase):
                 path = directory / "metadata.json"; path.write_text(json.dumps(metadata)); service._index_output(path)
             with self.assertRaisesRegex(GenerationError, "descendants"):
                 service.delete_output(source_id)
+            grandchild_id = "00000000-0000-0000-0000-000000000003"
+            directory = service.paths.outputs / grandchild_id; directory.mkdir()
+            (directory / "video.mp4").write_bytes(b"video")
+            metadata = {"output_id": grandchild_id, "request": {}, "result": {"media_file": "video.mp4"}, "lineage": [{"output_id": descendant_id, "relation": "narrated_from"}]}
+            path = directory / "metadata.json"; path.write_text(json.dumps(metadata)); service._index_output(path)
+            result = service.delete_output(source_id, cascade=True)
+            self.assertEqual(result["deleted_output_ids"], [source_id, descendant_id, grandchild_id])
+            self.assertEqual(service.library_payload(), [])
 
     def test_story_planner_draft_is_cancellable_and_unloaded(self):
         class BlockingPlanner:

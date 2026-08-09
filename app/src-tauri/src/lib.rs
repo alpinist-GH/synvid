@@ -638,6 +638,7 @@ fn list_outputs(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result
 #[tauri::command]
 fn delete_output(
     output_id: String,
+    cascade: bool,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
     if output_id.len() != 36
@@ -651,7 +652,7 @@ fn delete_output(
         supervisor
             .lock()
             .expect("worker supervisor lock poisoned")
-            .request("delete_output", json!({"output_id": output_id}))?,
+            .request("delete_output", json!({"output_id": output_id, "cascade": cascade}))?,
     )
 }
 

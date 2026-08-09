@@ -31,7 +31,9 @@ rm -f "$dmg_path"
 find "$app_bundle" -type f -name .DS_Store -delete
 ditto "$app_bundle" "$stage_dir/SynVid.app"
 ln -s /Applications "$stage_dir/Applications"
-hdiutil create -volname SynVid -srcfolder "$stage_dir" -ov -format UDZO "$dmg_path" >/dev/null
+# Explicit APFS avoids hdiutil's unreliable automatic filesystem selection on
+# recent macOS releases (which can otherwise fail with "device not configured").
+hdiutil create -volname SynVid -srcfolder "$stage_dir" -fs APFS -ov -format UDZO "$dmg_path" >/dev/null
 test -s "$dmg_path"
 printf '%s\n' "local app created: $app_bundle"
 printf '%s\n' "unsigned local DMG created: $dmg_path"
