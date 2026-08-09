@@ -29,10 +29,12 @@ not yet a notarized, publicly distributable release.
   `minimumSystemVersion`). This is a distribution floor, not a promise that
   every model runs well on every supported Apple GPU — model support is
   gated per-model by a real measured MPS run (see [Models](#models) below).
-- Tested configuration: MacBook Pro, Apple M5 Pro, 48 GB RAM, macOS 26.5.2.
-  Nothing here has been tested on Intel, on a different Apple Silicon
-  generation, or with less memory — expect some larger models (Wan 2.1 14B
-  at ~78 GB on disk, HunyuanVideo 1.5 at ~53-54 GB) to be impractical or to
+- Tested configuration: MacBook Pro, Apple M5 Pro, 48 GB RAM, macOS 26.5.2,
+  with PyTorch 2.13.0, diffusers 0.39.0, and transformers 5.14.1
+  (`requirements.lock`). Nothing here has been tested on Intel, on a
+  different Apple Silicon generation, with less memory, or against other
+  PyTorch/diffusers versions — expect some larger models (Wan 2.1 14B at
+  ~78 GB on disk, HunyuanVideo 1.5 at ~53-54 GB) to be impractical or to
   fail outright on machines with less unified memory.
 - Free disk: models range from ~3 GB (the disabled story-planner LLM) to
   ~78 GB (Wan 2.1 14B). SynVid reserves disk space (with a 2 GB safety
