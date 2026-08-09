@@ -654,6 +654,14 @@ fn model_catalog(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Resul
 }
 
 #[tauri::command]
+fn download_model(model_id: String, supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> Result<Value, String> {
+    if model_id.len() > 64 || !model_id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-') {
+        return Err("Invalid model download request.".into());
+    }
+    response_payload(supervisor.lock().expect("worker supervisor lock poisoned").request("download_model", json!({"model_id": model_id}))?)
+}
+
+#[tauri::command]
 fn remove_model(
     model_id: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
@@ -1059,6 +1067,7 @@ pub fn run() {
             worker_status,
             list_outputs,
             model_catalog,
+            download_model,
             remove_model,
             clean_temporary,
             output_media_path,

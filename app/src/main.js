@@ -18,8 +18,13 @@ const jobStatus = $("#job-status");
 const generateButton = $("#generate");
 const cancelButton = $("#cancel");
 const error = $("#form-error");
+const generationProgress = $("#generation-progress");
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
+function renderGenerationProgress(job) {
+  generationProgress.hidden = !job;
+  generationProgress.value = job ? Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100) : 0;
+}
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
@@ -56,6 +61,7 @@ function activeProfile() { const model = selectedModel(); return isImageModel() 
 function updateControls() {
   const profile = activeProfile(); const available = state.connected && profile && !state.activeJob;
   generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
+  renderGenerationProgress(state.activeJob);
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
   $("#fps").textContent = profile && !isImageModel() ? `${profile.fps} FPS (Native)` : "—";
   generateButton.textContent = isImageModel() ? "Generate image" : "Generate video";
@@ -172,6 +178,21 @@ function renderModelCatalog(models) {
         catch (reason) { setError(String(reason)); remove.disabled = false; }
       });
       item.append(remove);
+    } else {
+      const download = document.createElement("button"); download.type = "button"; download.textContent = "Download model…";
+      download.addEventListener("click", () => {
+        const access = model.requires_access_confirmation ? " Access approval is required." : "";
+        const approved = window.confirm(`Download ${model.display_name}?\n\nRevision: ${model.revision}\nExpected size: ${model.expected_size_gib} GB\nLicense: ${model.license}.${access}\n\nSynVid will request a final authorization before any network transfer.`);
+        if (!approved) return;
+        download.disabled = true;
+        try {
+          const accepted = await invoke("download_model", { modelId: model.model_id });
+          state.activeJob = { job_id: accepted.job_id || accepted.jobId, status_text: `Downloading ${model.display_name}`, progress: 0 };
+          jobStatus.textContent = `Downloading ${model.display_name}…`;
+          updateControls();
+        } catch (reason) { setError(String(reason)); download.disabled = false; }
+      });
+      item.append(download);
     }
     list.append(item);
   }

@@ -97,6 +97,16 @@ def serve() -> int:
                 _reply(request, "status", service.status_payload())
             elif request.kind == "model_catalog":
                 _reply(request, "status", service.model_catalog())
+            elif request.kind == "download_model":
+                model_id = request.payload.get("model_id")
+                if not isinstance(model_id, str): raise ProtocolError("download_model requires a model ID")
+                def progress(job): _reply(request, "progress", service._job_payload(job))
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output: payload.update(output)
+                    _reply(request, "terminal", payload)
+                job = service.submit_model_download(model_id, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "remove_model":
                 _reply(request, "status", service.remove_model(request.payload.get("model_id")))
             elif request.kind == "clean_temporary":

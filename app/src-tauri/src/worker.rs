@@ -3,6 +3,7 @@
 //! bundled resource and Rust verifies the handshake before the UI can use it.
 
 use serde_json::{Value, json};
+use crate::credentials;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -60,7 +61,11 @@ impl WorkerSupervisor {
         // Retain the fixed resource location before launch so an initial
         // transient failure can be retried through the same narrow path.
         self.executable = Some(executable.to_owned());
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        if let Ok(token) = credentials::hugging_face_token() {
+            command.env("SYNVID_HF_TOKEN", token);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

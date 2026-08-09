@@ -12,6 +12,7 @@ import re
 from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
+from .model_download import download_model
 from .models import REGISTRY
 from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio, synthesize_segmented, write_srt
 from .outputs import OutputPaths, allocate, promote, resolve_owned_file
@@ -426,6 +427,19 @@ class GenerationService:
     def model_catalog(self) -> dict:
         """Expose reviewed model facts and local install state, never a download URL."""
         return {"models": [self._model_status(model_id) for model_id in REGISTRY] + [self._kokoro_status()]}
+
+    def submit_model_download(self, model_id: str, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        if model_id not in REGISTRY:
+            raise GenerationError("selected model is not managed by SynVid")
+        spec = REGISTRY[model_id]
+        job_ready = __import__("threading").Event(); job: Job | None = None
+        def runner(_progress, cancelled) -> None:
+            job_ready.wait(); assert job is not None
+            with self.reservations.hold(Estimate(int(spec.expected_size_gib * 1024**3), True)):
+                result = download_model(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
+                self._job_results[job.job_id] = {"model_install": result}
+        job = self.jobs.submit(runner); job_ready.set(); self._watch_terminal(job, on_terminal)
+        return job
 
     def remove_model(self, model_id: str) -> dict:
         if self.jobs.current() is not None:
