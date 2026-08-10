@@ -35,7 +35,6 @@ struct GenerateRequest {
 const ENABLED_GENERATION_MODELS: &[&str] = &[
     "ltx-video",
     "flux-schnell",
-    "wan2.2-ti2v-5b",
     "hunyuan15-480p-t2v",
     "hunyuan15-480p-i2v",
 ];
@@ -206,6 +205,14 @@ fn response_payload(reply: Value) -> Result<Value, String> {
             .cloned()
             .ok_or("worker response had no payload".into()),
     }
+}
+
+fn valid_model_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.')
+        })
 }
 
 /// This intentionally exposes no process, filesystem, or shell command to the webview.
@@ -718,11 +725,7 @@ fn download_model(
     model_id: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if model_id.len() > 64
-        || !model_id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    {
+    if !valid_model_id(&model_id) {
         return Err("Invalid model download request.".into());
     }
     response_payload(
@@ -739,11 +742,7 @@ fn calibrate_model(
     recipe: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if model_id.len() > 64
-        || !model_id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    {
+    if !valid_model_id(&model_id) {
         return Err("Invalid model calibration request.".into());
     }
     if recipe.len() > 32 || !recipe.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
@@ -765,11 +764,7 @@ fn remove_model(
     model_id: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
 ) -> Result<Value, String> {
-    if model_id.len() > 64
-        || !model_id.chars().all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
-        })
-    {
+    if !valid_model_id(&model_id) {
         return Err("Invalid model removal request.".into());
     }
     response_payload(
@@ -1382,7 +1377,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod diagnostic_tests {
-    use super::redact_diagnostic_line;
+    use super::{redact_diagnostic_line, valid_model_id};
     use std::path::Path;
 
     #[test]
@@ -1407,5 +1402,12 @@ mod diagnostic_tests {
     fn leaves_ordinary_lines_untouched() {
         let redacted = redact_diagnostic_line("model loaded in 4.2s", None);
         assert_eq!(redacted, "model loaded in 4.2s");
+    }
+
+    #[test]
+    fn accepts_dotted_model_ids_used_by_legacy_wan_installs() {
+        assert!(valid_model_id("wan2.2-ti2v-5b"));
+        assert!(!valid_model_id("Wan 2.2"));
+        assert!(!valid_model_id("../model"));
     }
 }

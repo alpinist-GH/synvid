@@ -1,6 +1,6 @@
 import unittest
 
-from worker.models import IMMUTABLE_REVISION, REGISTRY, resolve
+from worker.models import IMMUTABLE_REVISION, REGISTRY, RETIRED_MODEL_IDS, resolve
 from worker.providers.base import Capability
 
 
@@ -13,20 +13,9 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(all(IMMUTABLE_REVISION.fullmatch(spec.revision) for spec in REGISTRY.values()))
         self.assertTrue(all(spec.expected_size_gib > 0 and spec.checksum_source for spec in REGISTRY.values()))
 
-    def test_wan22_tiiv_5b_is_an_explicit_experimental_video_option(self):
-        spec = REGISTRY["wan2.2-ti2v-5b"]
-        self.assertIn(Capability.VIDEO_GENERATION, spec.capabilities)
-        self.assertEqual(spec.repository, "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
-        self.assertFalse(spec.requires_access_confirmation)
-        self.assertIn("MPS", spec.reason)
-
-    def test_wan21_variants_are_exposed_text_to_video_only(self):
-        for model_id in ("wan2.1-1.3b", "wan2.1-14b"):
-            spec = REGISTRY[model_id]
-            self.assertIn(Capability.VIDEO_GENERATION, spec.capabilities)
-            self.assertEqual(spec.supported_modes, frozenset({"text"}))
-            self.assertFalse(spec.requires_access_confirmation)
-            self.assertIn("no measured profile exists on this Mac yet", spec.reason)
+    def test_quality_failed_wan_models_are_retired_from_the_download_registry(self):
+        self.assertEqual(RETIRED_MODEL_IDS, {"wan2.1-1.3b", "wan2.1-14b", "wan2.2-ti2v-5b"})
+        self.assertTrue(RETIRED_MODEL_IDS.isdisjoint(REGISTRY))
 
     def test_hunyuan15_has_pinned_personal_t2v_and_i2v_entries(self):
         t2v = REGISTRY["hunyuan15-480p-t2v"]

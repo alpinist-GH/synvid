@@ -186,7 +186,6 @@ function updateControls() {
     else if (!profile) jobStatus.textContent = hasUncalibratedRecipe(model)
       ? "This model needs on-device calibration before it can generate. Open Settings to calibrate it."
       : (selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.");
-    else if (state.modelId === "wan2.2-ti2v-5b") jobStatus.textContent = "Ready for experimental Wan 2.2 testing. The measured output has not passed the quality gate.";
     else jobStatus.textContent = "Ready to generate locally.";
   }
   renderGenerationProgress(state.activeJob);
@@ -389,10 +388,19 @@ function renderModelCatalog(models) {
       remove.addEventListener("click", async () => {
         if (!(await appConfirm(`Remove ${model.display_name}? This deletes only its SynVid model files and cannot be undone.`))) return;
         remove.disabled = true;
-        try { const result = await invoke("remove_model", { modelId: model.model_id }); $("#cleanup-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes)}.` : `${model.display_name} was already absent.`; await showSettings(); }
-        catch (reason) { setError(String(reason)); remove.disabled = false; }
+        try {
+          const result = await invoke("remove_model", { modelId: model.model_id });
+          $("#cleanup-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.` : `${model.display_name} was already absent.`;
+          await showSettings();
+        } catch (reason) {
+          $("#cleanup-status").textContent = `Could not remove ${model.display_name}: ${String(reason)}.`;
+          remove.disabled = false;
+        }
       });
       item.append(remove);
+      if (model.retired) {
+        const retired = document.createElement("p"); retired.className = "field-help"; retired.textContent = "Retired; no new downloads are available."; item.append(retired);
+      }
     } else {
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download model…";
       download.addEventListener("click", async () => {

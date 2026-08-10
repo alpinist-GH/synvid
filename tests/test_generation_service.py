@@ -120,6 +120,19 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(cleaned["freed_bytes"], len(b"temporary")); self.assertFalse(temporary.exists())
             self.assertTrue(service.paths.outputs.is_dir())
 
+    def test_installed_retired_wan_model_is_removal_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            root = service.paths.models / "wan2.2-ti2v-5b"
+            (root / "snapshot").mkdir(parents=True)
+            (root / "snapshot" / "model.safetensors").write_bytes(b"retired")
+            catalog = {item["model_id"]: item for item in service.model_catalog()["models"]}
+            self.assertTrue(catalog["wan2.2-ti2v-5b"]["installed"])
+            self.assertTrue(catalog["wan2.2-ti2v-5b"]["retired"])
+            removed = service.remove_model("wan2.2-ti2v-5b")
+            self.assertTrue(removed["removed"])
+            self.assertFalse(root.exists())
+
     def test_library_deletion_removes_unreferenced_output_and_refuses_descendants(self):
         with tempfile.TemporaryDirectory() as temp:
             service = self._service(temp)

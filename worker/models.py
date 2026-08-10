@@ -79,6 +79,16 @@ _HUNYUAN_DIFFUSERS_FILES = (
 
 _HUNYUAN_LICENSE = "Tencent Hunyuan Community License Agreement (territory-restricted)"
 
+# These models failed the local watchability gate. Keep their IDs only so an
+# existing SynVid-owned install can be displayed as removal-only cleanup; they
+# must not be selectable or offered for a new download.
+RETIRED_MODELS = {
+    "wan2.1-1.3b": ("Wan 2.1 1.3B", "Retired after its local quality gate failed; remove the existing install to reclaim disk space."),
+    "wan2.1-14b": ("Wan 2.1 14B", "Retired after its local quality gate failed; remove the existing install to reclaim disk space."),
+    "wan2.2-ti2v-5b": ("Wan 2.2 TI2V 5B", "Retired after its local quality gate failed; remove the existing install to reclaim disk space."),
+}
+RETIRED_MODEL_IDS = frozenset(RETIRED_MODELS)
+
 REGISTRY = {
     "ltx-video": ModelSpec("ltx-video", "LTX Video", "Creates local videos from text and edits completed LTX videos.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Lightricks/LTX-Video", "8984fa25007f376c1a299016d0957a37a2f797bb", "LTX-Video Open Weights License", 24.0, True, _DIFFUSERS_FILES + ("ltxv-2b-0.9.8-distilled.safetensors",), _HF_LFS),
     "flux-schnell": ModelSpec("flux-schnell", "FLUX.1-schnell", "Creates still images for prompts and Story Mode storyboards.", frozenset({Capability.IMAGE_GENERATION}), "shareable", "black-forest-labs/FLUX.1-schnell", "741f7c3ce8b383c54771c7003378a50191e9efe9", "Apache-2.0", 54.0, True, _DIFFUSERS_FILES + ("flux1-schnell.safetensors",), _HF_LFS),
@@ -89,9 +99,6 @@ REGISTRY = {
     # presented as a supported feature merely because it is permissively licensed.
     "qwen-image-edit": ModelSpec("qwen-image-edit", "Qwen Image Edit", "Edits a completed image from a text instruction.", frozenset({Capability.IMAGE_EDITING}), "shareable", "Qwen/Qwen-Image-Edit", "ac7f9318f633fc4b5778c59367c8128225f1e3de", "Apache-2.0", 57.7, True, _DIFFUSERS_FILES + ("processor/*.json",), _HF_LFS),
     "qwen-story-planner": ModelSpec("qwen-story-planner", "Qwen Story Planner", "Optional local draft-scene assistant; currently unavailable because its structured-output quality gate did not pass.", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
-    "wan2.1-1.3b": ModelSpec("wan2.1-1.3b", "Wan 2.1 1.3B", "Experimental text-to-video candidate now exposed for local testing; no measured profile exists on this Mac yet, and a prior smoke test found its MPS output was not watchable.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "0fad780a534b6463e45facd96134c9f345acfa5b", "Apache-2.0", 29.0, False, _DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
-    "wan2.1-14b": ModelSpec("wan2.1-14b", "Wan 2.1 14B", "Experimental text-to-video candidate now exposed for local testing; its 78 GB checkpoint requires its own measured memory strategy and no measured profile exists on this Mac yet.", frozenset({Capability.VIDEO_GENERATION, Capability.VIDEO_EDITING}), "shareable", "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", "Apache-2.0", 78.0, False, _DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
-    "wan2.2-ti2v-5b": ModelSpec("wan2.2-ti2v-5b", "Wan 2.2 TI2V 5B", "Experimental text-to-video test profile; MPS runtime passed, but the measured Diffusers output is blurry/overexposed and is not a quality-approved profile.", frozenset({Capability.VIDEO_GENERATION}), "shareable", "Wan-AI/Wan2.2-TI2V-5B-Diffusers", "bfbd0086538bbf9b0f7c1f1939879d65e1f872ce", "Apache-2.0", 34.2, False, _DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
     "hunyuan15-480p-t2v": ModelSpec("hunyuan15-480p-t2v", "HunyuanVideo 1.5 480p T2V", "Experimental 8.3B text-to-video provider with a measured MPS Balanced profile on this Mac (848x480, 25 frames/24fps, 20 steps, ~34.3 GiB peak MPS allocation); longer frame counts (61+) thrash this Mac's unified memory and remain unmeasured. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v", "286be7ce72277246578a3e3cc2487e95ddae5bcf", _HUNYUAN_LICENSE, 53.4, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
     "hunyuan15-480p-i2v": ModelSpec("hunyuan15-480p-i2v", "HunyuanVideo 1.5 480p I2V", "Experimental 8.3B image-to-video provider; requires a real MPS memory, cancellation, and watchability gate. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v", "5a700ee883ff4c1b3d887ec4188755a7a5e2f698", _HUNYUAN_LICENSE, 54.2, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"image"})),
 }

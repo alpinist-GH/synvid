@@ -51,7 +51,6 @@ from .paths import AppPaths
 from .providers.ltx import LtxProvider
 from .providers.flux import FluxSchnellProvider
 from .providers.qwen_image_edit import QwenImageEditProvider
-from .providers.wan import WanT2VProvider
 from .providers.hunyuan import HunyuanVideo15Provider
 from .models import REGISTRY
 from .resources import Estimate
@@ -96,21 +95,6 @@ def _service() -> GenerationService:
         paths.models / "qwen-image-edit" / "snapshot",
         paths.models / "qwen-image-edit" / "measured-profile.json",
     )
-    wan21_1_3b = WanT2VProvider(
-        paths.models / "wan2.1-1.3b" / "snapshot",
-        paths.models / "wan2.1-1.3b" / "measured-profile.json",
-        model_id="wan2.1-1.3b",
-    )
-    wan21_14b = WanT2VProvider(
-        paths.models / "wan2.1-14b" / "snapshot",
-        paths.models / "wan2.1-14b" / "measured-profile.json",
-        model_id="wan2.1-14b",
-    )
-    wan22 = WanT2VProvider(
-        paths.models / "wan2.2-ti2v-5b" / "snapshot",
-        paths.models / "wan2.2-ti2v-5b" / "measured-profile.json",
-        model_id="wan2.2-ti2v-5b",
-    )
     hunyuan_t2v = HunyuanVideo15Provider(
         paths.models / "hunyuan15-480p-t2v" / "snapshot",
         paths.models / "hunyuan15-480p-t2v" / "measured-profile.json",
@@ -124,22 +108,16 @@ def _service() -> GenerationService:
     estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
     flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
     qwen_image_edit_estimate = _measured_estimate(paths.models / "qwen-image-edit" / "measured-profile.json")
-    wan21_1_3b_estimate = _measured_estimate(paths.models / "wan2.1-1.3b" / "measured-profile.json")
-    wan21_14b_estimate = _measured_estimate(paths.models / "wan2.1-14b" / "measured-profile.json")
-    wan22_estimate = _measured_estimate(paths.models / "wan2.2-ti2v-5b" / "measured-profile.json")
     hunyuan_t2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-t2v" / "measured-profile.json", "hunyuan15-480p-t2v")
     hunyuan_i2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-i2v" / "measured-profile.json", "hunyuan15-480p-i2v")
     return GenerationService(
         paths,
         ltx,
         estimate,
-        additional_providers=(flux, qwen_image_edit, wan21_1_3b, wan21_14b, wan22, hunyuan_t2v, hunyuan_i2v),
+        additional_providers=(flux, qwen_image_edit, hunyuan_t2v, hunyuan_i2v),
         estimates={
             "flux-schnell": flux_estimate,
             "qwen-image-edit": qwen_image_edit_estimate,
-            "wan2.1-1.3b": wan21_1_3b_estimate,
-            "wan2.1-14b": wan21_14b_estimate,
-            "wan2.2-ti2v-5b": wan22_estimate,
             "hunyuan15-480p-t2v": hunyuan_t2v_estimate,
             "hunyuan15-480p-i2v": hunyuan_i2v_estimate,
         },

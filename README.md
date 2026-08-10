@@ -33,11 +33,11 @@ not yet a notarized, publicly distributable release.
   with PyTorch 2.13.0, diffusers 0.39.0, and transformers 5.14.1
   (`requirements.lock`). Nothing here has been tested on Intel, on a
   different Apple Silicon generation, with less memory, or against other
-  PyTorch/diffusers versions — expect some larger models (Wan 2.1 14B at
-  ~78 GB on disk, HunyuanVideo 1.5 at ~53-54 GB) to be impractical or to
+  PyTorch/diffusers versions — expect some larger models (HunyuanVideo 1.5 at
+  ~53-54 GB) to be impractical or to
   fail outright on machines with less unified memory.
 - Free disk: models range from ~3 GB (the disabled story-planner LLM) to
-  ~78 GB (Wan 2.1 14B). SynVid reserves disk space (with a 2 GB safety
+  ~57.7 GB (Qwen Image Edit). SynVid reserves disk space (with a 2 GB safety
   margin) before any download or generation job and refuses admission if
   the reservation would exceed free space, rather than starting and
   running out mid-job.
@@ -225,22 +225,20 @@ that distinction behind a plausible-looking control.
 | **LTX Video** | text/image → video, video editing | LTX-Video Open Weights | 24 GB | ✅ Measured: Draft 256×256/9 frames/8 fps/4 steps (1.125s); Balanced 256×256/49 frames/8 fps/8 steps (6.125s); High 256×256/9 frames/8 fps/12 steps |
 | **FLUX.1-schnell** | text → image | Apache-2.0 | 54 GB | ✅ Measured: 512×512, 4 steps, bf16 — 48.5s, ~33.7 GB peak MPS |
 | **Qwen Image Edit** | image editing | Apache-2.0 | 57.7 GB | ✅ Measured: 512×512, 4 steps, bf16 — 621s first run, ~57.7 GB peak MPS |
-| **Wan 2.2 TI2V 5B** | text → video | Apache-2.0 | 34.2 GB | ⚠️ Runtime passed, **quality gate failed** — output is "blurry/overexposed," exposed only as an explicitly experimental test profile |
 | **HunyuanVideo 1.5 480p** (T2V and I2V) | text/image → video | Tencent Hunyuan Community License — **excludes the EU, UK, and South Korea** | 53.4 / 54.2 GB | ⚠️ **Never measured on this Mac** — an unvalidated placeholder test profile only (848×480, 121 frames, 24 fps, 50 steps) |
-| Wan 2.1 1.3B | text → video | Apache-2.0 | 29 GB | ❌ Quality gate failed ("not watchable" MPS output); registered but not selectable in the generation UI |
-| Wan 2.1 14B | text → video, video editing | Apache-2.0 | 78 GB | ❌ Quality gate failed ("indistinct blur"); registered but not selectable |
 | FLUX.1-dev | text → image | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, not selectable in the generation UI |
 | FLUX.1-Kontext-dev | image editing | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, not wired to any command |
 | Qwen Story Planner (Qwen2.5-1.5B-Instruct) | Story Mode scene drafting | Apache-2.0 | 2.9 GB | ❌ Failed its adversarial structured-output gate; the "Draft scenes locally" button is disabled in the UI. Manual Story Mode authoring is unaffected. |
 
-Only LTX Video, FLUX.1-schnell, Wan 2.2 TI2V 5B, and both HunyuanVideo 1.5
-480p entries are selectable in the **Create** (generation) model dropdown
-(`app/src-tauri/src/lib.rs`'s `ENABLED_GENERATION_MODELS`, 5 entries). Qwen
+Only LTX Video, FLUX.1-schnell, and both HunyuanVideo 1.5 480p entries are
+selectable in the **Create** (generation) model dropdown
+(`app/src-tauri/src/lib.rs`'s `ENABLED_GENERATION_MODELS`, 4 entries). Qwen
 Image Edit is reachable only through the separate **Edit Image** flow, not
-the Create dropdown. Every other registered model — Wan 2.1 1.3B/14B,
-FLUX.1-dev, FLUX.1-Kontext-dev, the story planner — is registered (so its
-catalog entry and reason text are visible in Settings) but has no path to
-select it for a job.
+the Create dropdown. FLUX.1-dev, FLUX.1-Kontext-dev, and the story planner
+remain registered for their explicit unavailable-state explanations. Wan 2.1
+and Wan 2.2 are retired after failed local quality gates; they are neither
+selectable nor downloadable. An existing retired snapshot is shown in
+Settings only as removal-only cleanup.
 
 ## Generation, quality, and export
 

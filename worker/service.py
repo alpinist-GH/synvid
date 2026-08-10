@@ -13,7 +13,7 @@ from typing import Callable
 
 from .jobs import BusyError, Job, JobController, JobState, TERMINAL_STATES
 from .model_download import download_model
-from .models import REGISTRY
+from .models import REGISTRY, RETIRED_MODEL_IDS, RETIRED_MODELS
 from .narration import NarrationError, Narrator, pad_or_reject_wav, replace_audio, synthesize_segmented, write_srt
 from .outputs import OutputPaths, allocate, promote, resolve_owned_file
 from .paths import AppPaths
@@ -449,7 +449,12 @@ class GenerationService:
 
     def model_catalog(self) -> dict:
         """Expose reviewed model facts and local install state, never a download URL."""
-        return {"models": [self._model_status(model_id) for model_id in REGISTRY] + [self._kokoro_status()]}
+        models = [self._model_status(model_id) for model_id in REGISTRY] + [self._kokoro_status()]
+        for model_id in sorted(RETIRED_MODEL_IDS):
+            status = self._retired_model_status(model_id)
+            if status["installed"]:
+                models.append(status)
+        return {"models": models}
 
     def submit_model_download(self, model_id: str, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
         if model_id not in REGISTRY:
@@ -508,7 +513,7 @@ class GenerationService:
     def remove_model(self, model_id: str) -> dict:
         if self.jobs.current() is not None:
             raise GenerationError("wait for the active job before removing a model")
-        if model_id not in REGISTRY and model_id != "kokoro-onnx":
+        if model_id not in REGISTRY and model_id not in RETIRED_MODEL_IDS and model_id != "kokoro-onnx":
             raise GenerationError("selected model is not managed by SynVid")
         if model_id in self._providers:
             self._providers[model_id].unload()
@@ -623,6 +628,27 @@ class GenerationService:
             "installed": installed,
             "installed_bytes": self._tree_size(root) if installed else 0,
             "calibration": self._calibration_info(provider, recipes, image),
+        }
+
+    def _retired_model_status(self, model_id: str) -> dict:
+        display_name, reason = RETIRED_MODELS[model_id]
+        root = self.paths.models / model_id
+        installed = root.is_dir() and not root.is_symlink() and (root / "snapshot").is_dir()
+        return {
+            "model_id": model_id,
+            "display_name": display_name,
+            "reason": reason,
+            "repository": "retired",
+            "revision": "retired",
+            "license": "not available for new downloads",
+            "profile": "retired",
+            "expected_size_gib": 0,
+            "requires_access_confirmation": False,
+            "modes": [],
+            "installed": installed,
+            "installed_bytes": self._tree_size(root) if installed else 0,
+            "calibration": None,
+            "retired": True,
         }
 
     def _kokoro_status(self) -> dict:

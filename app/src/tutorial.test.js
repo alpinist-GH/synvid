@@ -39,12 +39,13 @@ test("library deletion reports its result inside the open dialog", () => {
   assert.match(source, /Could not refresh the Library:/);
 });
 
-test("experimental Wan models are selectable for local testing", () => {
+test("quality-failed Wan models are retired from generation settings", () => {
   for (const modelId of ["wan2.1-1.3b", "wan2.1-14b", "wan2.2-ti2v-5b"]) {
-    assert.match(markup, new RegExp(`value="${modelId.replace(/\./g, "\\.")}"`));
+    assert.doesNotMatch(markup, new RegExp(`value="${modelId.replace(/\./g, "\\.")}"`));
   }
-  assert.match(source, /Ready for experimental Wan 2\.2 testing/);
-  assert.match(source, /modes\.includes\("text"\)/);
+  assert.doesNotMatch(source, /Ready for experimental Wan 2\.2 testing/);
+  assert.match(source, /model\.retired/);
+  assert.match(source, /Could not remove \$\{model\.display_name\}/);
 });
 
 test("model downloads expose byte progress and diagnostics preview", async () => {
