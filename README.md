@@ -111,6 +111,21 @@ Three scripts, in increasing order of what they produce:
   ```
 
   This build is **not notarized** — see below.
+- **`scripts/notarize-release-dmg.sh`** — the explicitly authorized step that
+  takes the signed DMG from `build-release-app.sh`, submits it to Apple's
+  notary service, staples the ticket, and validates the result with
+  `stapler` and `spctl`, producing
+  `dist/release/SynVid-0.1.0-notarized.dmg`. Requires a notarytool keychain
+  profile and `SYNVID_NOTARY_PROFILE` set to its name:
+
+  ```sh
+  xcrun notarytool store-credentials PROFILE_NAME \
+    --apple-id you@example.com --team-id TEAMID --password app-specific-password
+  SYNVID_NOTARY_PROFILE=PROFILE_NAME ./scripts/notarize-release-dmg.sh
+  ```
+
+  This step uploads the DMG to Apple and is never run automatically by any
+  other script — see below.
 
 ## Installing, updating, and uninstalling
 
@@ -376,7 +391,10 @@ correctly shows macOS's "Apple cannot check it for malicious software"
 rejection when downloaded and opened normally — this was directly verified
 and is the expected, safe behavior for a build at this stage, not a defect.
 Notarization is a deliberate separate step, gated on explicit authorization
-before any public distribution, per `PLAN.md`.
+before any public distribution, per `PLAN.md`. `scripts/notarize-release-dmg.sh`
+implements that step (submit, staple, validate) but has not itself been run
+against a real Apple Developer notary profile yet — running it requires an
+explicit decision to submit the build to Apple.
 
 ## SBOM and third-party notices
 
