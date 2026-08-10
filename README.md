@@ -16,11 +16,14 @@ evidence.
 
 ## Status
 
-All eight build stages in `PLAN.md` have a first real pass; three still have
-open items recorded in their stage notes (a full human VoiceOver pass, GPL
-license disposition for narration's phonemizer chain, and public
-notarization). This is a real, working local app on the tested Mac below —
-not yet a notarized, publicly distributable release.
+All eight build stages in `PLAN.md` have a first real pass; two still have
+open items recorded in their stage notes: a full human VoiceOver pass, and
+GPL license disposition for narration's phonemizer chain (see
+[SBOM and third-party notices](#sbom-and-third-party-notices)). The app is
+now signed and notarized (see [Getting the app](#getting-the-app) and
+[Signing and notarization](#signing-and-notarization)), but the GPL
+disposition is a real, unresolved open item that applies to this release —
+notarization verifies code signing, not license compliance.
 
 ## Requirements
 
@@ -44,9 +47,12 @@ not yet a notarized, publicly distributable release.
 
 ## Getting the app
 
-There is no signed, notarized public release yet (see
-[Signing and notarization](#signing-and-notarization)). To run SynVid today
-you build it from source on your own Mac.
+Download the signed, notarized DMG from the
+[GitHub Releases page](https://github.com/alpinist-GH/synvid/releases),
+mount it, and drag `SynVid.app` to `/Applications` — see
+[Signing and notarization](#signing-and-notarization) for what that
+verifies (and what it doesn't). You can also build it yourself from source
+instead.
 
 ## Building from source
 
@@ -72,7 +78,7 @@ python3.11 -m venv venv
 Run the test suites:
 
 ```sh
-./venv/bin/python -m pytest tests/ -q          # 86 worker/protocol tests, stdlib + pytest only
+./venv/bin/python -m pytest tests/ -q          # 103 worker/protocol tests, stdlib + pytest only
 cd app/src-tauri && cargo test --release        # Rust unit tests (worker supervisor, diagnostics redaction)
 ```
 
@@ -384,15 +390,29 @@ live destructive test this pass).
 Release builds are signed with a Developer ID Application certificate and
 hardened runtime, with every nested executable, dylib, and framework signed
 before the outer app and DMG (§ [Building the app bundle](#building-the-app-bundle)).
-**They are not notarized.** An unnotarized, Gatekeeper-quarantined DMG
-correctly shows macOS's "Apple cannot check it for malicious software"
-rejection when downloaded and opened normally — this was directly verified
-and is the expected, safe behavior for a build at this stage, not a defect.
-Notarization is a deliberate separate step, gated on explicit authorization
-before any public distribution, per `PLAN.md`. `scripts/notarize-release-dmg.sh`
-implements that step (submit, staple, validate) but has not itself been run
-against a real Apple Developer notary profile yet — running it requires an
-explicit decision to submit the build to Apple.
+Every signature uses a secure (Apple TSA) timestamp — `codesign
+--timestamp=none` produces signatures the notary service unconditionally
+rejects, so the build script never uses it.
+
+The GitHub Releases DMG is **notarized**: submitted via
+`scripts/notarize-release-dmg.sh` to Apple's notary service, stapled, and
+validated. Apple accepted the submission, the stapled ticket validated with
+`stapler validate`, and `spctl -a -t exec` against the mounted `.app`
+returned `accepted` / `source=Notarized Developer ID` — the check that
+reflects what actually happens when a user opens the app. (The script's own
+DMG-level `spctl -a -t open --context context:primary-signing-identifier`
+check is unreliable when invoked from a terminal — it needs a real
+Finder/Safari-set quarantine event to evaluate correctly, not a manually
+added `com.apple.quarantine` xattr — so a rejection there alongside a clean
+`spctl -a -t exec` result is a known CLI limitation, not a real Gatekeeper
+problem.) Notarization remains an explicit, manually authorized step
+(`SYNVID_NOTARY_PROFILE`); it is never run automatically by any other
+script or as part of `build-release-app.sh`.
+
+**Notarization is not a legal clearance.** It verifies code signing and
+malware scanning only. The [GPL disposition](#sbom-and-third-party-notices)
+below is a separate, still-unresolved item that applies to this release
+regardless of notarization status.
 
 ## SBOM and third-party notices
 
@@ -410,10 +430,12 @@ shipped worker bundle — `phonemizer-fork` (GPLv3+) and the native
 `libespeak-ng.dylib` it loads (both part of Kokoro's narration path), and a
 GPL-configured build of `ffmpeg` with `libx264` in active use for video
 encoding. These require an explicit product/legal decision (offer FFmpeg's
-corresponding source, or swap components for non-copyleft alternatives)
-before public distribution; they are documented, not yet resolved.
-`THIRD_PARTY_NOTICES.md` currently exists only in the `dist/release/`
-build-output tree, not yet embedded inside the shipped `.app`.
+corresponding source, or swap components for non-copyleft alternatives).
+**This decision has not been made yet, and the current GitHub Release ships
+anyway with this item open** — a known gap called out in the release notes,
+not a resolved compliance posture. `THIRD_PARTY_NOTICES.md` currently
+exists only in the `dist/release/` build-output tree, not yet embedded
+inside the shipped `.app`.
 
 ## Contributing / internal docs
 
