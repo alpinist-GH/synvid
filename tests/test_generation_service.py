@@ -483,6 +483,39 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(provider.request.source_image, source_dir / "image.png")
             self.assertTrue((source_dir / "image.png").is_file())
 
+    def test_recipe_validation_is_driven_by_the_providers_own_catalog(self):
+        class Profile:
+            width = 512
+            height = 288
+            frames = 9
+            fps = 8
+            steps = 3
+            guidance_scale = 1.0
+
+        class Recipes:
+            recipes = {"BalancedLandscape": Profile()}
+
+        class AspectProvider(FakeProvider):
+            facts = ProviderFacts(
+                "fake-aspect", frozenset({Capability.VIDEO_GENERATION}), "shareable", "fixture-aspect-v1", "test-only", False,
+                calibration_recipes=frozenset({"BalancedLandscape"}),
+            )
+            def measured_recipes(self): return Recipes()
+
+        with tempfile.TemporaryDirectory() as temp:
+            provider = AspectProvider()
+            provider.facts = AspectProvider.facts
+            service = self._service(temp, provider)
+            terminal = threading.Event(); received = []
+            service.submit(
+                {"prompt": "wide shot", "seed": 1, "recipe": "BalancedLandscape"},
+                lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()),
+            )
+            self.assertTrue(terminal.wait(2))
+            self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+            with self.assertRaisesRegex(GenerationError, "recipe is not available"):
+                service.submit({"prompt": "wide shot", "seed": 1, "recipe": "Balanced"}, lambda _job: None, lambda _job, _output: None)
+
 
 class CalibrationServiceTests(unittest.TestCase):
     def _service(self, root, calibratable):

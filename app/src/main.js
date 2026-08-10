@@ -21,7 +21,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -142,7 +142,10 @@ function renderCalibrationProgress(job) {
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
-function draft() { return { prompt: $("#prompt").value, seed: $("#seed").value, recipe: state.recipe }; }
+const QUALITY_TIERS = ["Draft", "Balanced", "High"];
+const ASPECT_RATIOS = ["Square", "Landscape", "Portrait"];
+function composeRecipeName(quality, aspect) { return aspect === "Square" ? quality : `${quality}${aspect}`; }
+function draft() { return { prompt: $("#prompt").value, seed: $("#seed").value, recipe: state.quality, aspect: state.aspect }; }
 function saveDraft() { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft())); }
 function renderHistory() { $("#undo").disabled = state.historyIndex <= 0; $("#redo").disabled = state.historyIndex >= state.history.length - 1; }
 function saveHistory() {
@@ -158,19 +161,31 @@ function applyDraft(raw) {
   const value = JSON.parse(raw);
   $("#prompt").value = typeof value.prompt === "string" ? value.prompt : "";
   $("#seed").value = /^\d+$/.test(String(value.seed)) ? value.seed : "42";
-  setRecipe(["Draft", "Balanced", "High"].includes(value.recipe) ? value.recipe : "Balanced");
+  state.aspect = ASPECT_RATIOS.includes(value.aspect) ? value.aspect : "Square";
+  for (const button of document.querySelectorAll("[data-aspect]")) button.setAttribute("aria-checked", String(button.dataset.aspect === state.aspect));
+  setRecipe(QUALITY_TIERS.includes(value.recipe) ? value.recipe : "Balanced");
 }
 function restoreDraft() {
   try { const value = localStorage.getItem(DRAFT_KEY); if (value) applyDraft(value); } catch { localStorage.removeItem(DRAFT_KEY); }
   state.history = [JSON.stringify(draft())]; state.historyIndex = 0; renderHistory();
 }
-function setRecipe(recipe) {
-  state.recipe = recipe;
-  for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === recipe));
+function setRecipe(quality) {
+  state.quality = quality;
+  state.recipe = composeRecipeName(state.quality, state.aspect);
+  for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === quality));
+  renderRecipeNote();
+}
+function setAspect(aspect) {
+  state.aspect = aspect;
+  state.recipe = composeRecipeName(state.quality, state.aspect);
+  for (const button of document.querySelectorAll("[data-aspect]")) button.setAttribute("aria-checked", String(button.dataset.aspect === aspect));
+  renderRecipeNote();
+}
+function renderRecipeNote() {
   const profile = activeProfile();
   $("#recipe-note").textContent = profile
-    ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.`
-    : `${recipe} has not been measured on this Mac.`;
+    ? `${state.recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.`
+    : `${state.recipe} has not been measured on this Mac.`;
   $("#advanced-note").textContent = "Custom overrides are unavailable: only the measured recipe map may be submitted.";
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
@@ -503,6 +518,7 @@ window.addEventListener("scroll", repositionWalkthrough, true);
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });
+for (const button of document.querySelectorAll("[data-aspect]")) button.addEventListener("click", () => { setAspect(button.dataset.aspect); saveHistory(); });
 for (const button of document.querySelectorAll("[data-mode]")) button.addEventListener("click", () => {
   if (isImageModel() || button.disabled) return;
   state.mode = button.dataset.mode;
@@ -513,7 +529,7 @@ $("#choose-image").addEventListener("click", async () => {
   try { const selected = await invoke("choose_source_image"); state.sourceImageId = selected.sourceImageId; $("#source-image-status").textContent = state.sourceImageId ? "Source image selected and copied into SynVid storage." : "No source image selected."; }
   catch (reason) { setError(String(reason)); }
 });
-$("#model").addEventListener("change", () => { state.modelId = $("#model").value; setRecipe("Balanced"); updateControls(); });
+$("#model").addEventListener("change", () => { state.modelId = $("#model").value; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;
@@ -559,7 +575,7 @@ $("#generate-voice").addEventListener("click", async () => {
     jobStatus.textContent = "Generating narration…"; updateControls();
   } catch (reason) { setError(String(reason)); }
 });
-$("#reset-preset").addEventListener("click", () => { setRecipe("Balanced"); saveHistory(); });
+$("#reset-preset").addEventListener("click", () => { setAspect("Square"); setRecipe("Balanced"); saveHistory(); });
 setupModelButton.addEventListener("click", showSettings);
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });

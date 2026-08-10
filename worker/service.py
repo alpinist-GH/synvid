@@ -33,6 +33,12 @@ class GenerationError(ValueError):
 _SOURCE_IMAGE_ID = re.compile(r"^[a-z0-9-]{16,128}$")
 _OUTPUT_ID = re.compile(r"^[0-9a-f-]{36}$")
 
+# Fallback recipe-name vocabulary for providers that declare no calibration
+# catalog of their own (e.g. test fixtures with no real measured registry).
+# Providers with a real registry (e.g. LtxProvider) are validated against
+# their own provider.facts.calibration_recipes instead.
+_LEGACY_RECIPE_NAMES = frozenset({"Draft", "Balanced", "High"})
+
 
 def _required(payload: dict, name: str, typ: type):
     value = payload.get(name)
@@ -226,7 +232,7 @@ class GenerationService:
         if provider.facts.capabilities == frozenset({Capability.IMAGE_GENERATION}):
             return self._parse_image_request(payload, prompt, provider)
         recipe = payload.get("recipe", "Balanced")
-        if recipe not in {"Draft", "Balanced", "High"}:
+        if recipe not in (provider.facts.calibration_recipes or _LEGACY_RECIPE_NAMES):
             raise GenerationError("recipe is not available")
         try:
             profile = provider.measured_recipes().recipes[recipe]
@@ -309,7 +315,7 @@ class GenerationService:
         if isinstance(change_amount, bool) or not isinstance(change_amount, (int, float)) or not 0.05 <= float(change_amount) <= 0.95:
             raise GenerationError("change amount must be between 0.05 and 0.95")
         recipe = payload.get("recipe", "Balanced")
-        if recipe not in {"Draft", "Balanced", "High"}:
+        if recipe not in (provider.facts.calibration_recipes or _LEGACY_RECIPE_NAMES):
             raise GenerationError("recipe is not available")
         try:
             profile = provider.measured_recipes().recipes[recipe]

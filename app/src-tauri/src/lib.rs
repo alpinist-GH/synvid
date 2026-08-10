@@ -210,6 +210,12 @@ fn valid_model_id(value: &str) -> bool {
         })
 }
 
+/// Format-only sanity check. The worker's provider registry (not this
+/// function) is the authority on which recipe names actually exist.
+fn valid_recipe_name(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 32 && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
 /// This intentionally exposes no process, filesystem, or shell command to the webview.
 #[tauri::command]
 fn worker_status(supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>) -> WorkerStatus {
@@ -275,7 +281,7 @@ fn generate(
     if request.prompt.trim().is_empty() || request.prompt.len() > 4_000 {
         return Err("Prompt must contain 1 to 4000 characters.".into());
     }
-    if !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High") {
+    if !valid_recipe_name(&request.recipe) {
         return Err("Generation recipe is not available.".into());
     }
     if !ENABLED_GENERATION_MODELS.contains(&request.model_id.as_str()) {
@@ -304,7 +310,7 @@ fn edit_video(
     if request.prompt.trim().is_empty()
         || request.prompt.len() > 4_000
         || request.source_output_id.len() != 36
-        || !matches!(request.recipe.as_str(), "Draft" | "Balanced" | "High")
+        || !valid_recipe_name(&request.recipe)
         || !(0.05..=0.95).contains(&request.change_amount)
         || request.model_id != "ltx-video"
     {
@@ -740,7 +746,7 @@ fn calibrate_model(
     if !valid_model_id(&model_id) {
         return Err("Invalid model calibration request.".into());
     }
-    if recipe.len() > 32 || !recipe.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if !valid_recipe_name(&recipe) {
         return Err("Invalid calibration recipe name.".into());
     }
     response_payload(
@@ -1372,7 +1378,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod diagnostic_tests {
-    use super::{redact_diagnostic_line, valid_model_id};
+    use super::{redact_diagnostic_line, valid_model_id, valid_recipe_name};
     use std::path::Path;
 
     #[test]
@@ -1404,5 +1410,28 @@ mod diagnostic_tests {
         assert!(valid_model_id("wan2.2-ti2v-5b"));
         assert!(!valid_model_id("Wan 2.2"));
         assert!(!valid_model_id("../model"));
+    }
+
+    #[test]
+    fn accepts_aspect_ratio_recipe_names() {
+        assert!(valid_recipe_name("Draft"));
+        assert!(valid_recipe_name("Balanced"));
+        assert!(valid_recipe_name("High"));
+        assert!(valid_recipe_name("DraftLandscape"));
+        assert!(valid_recipe_name("BalancedLandscape"));
+        assert!(valid_recipe_name("HighLandscape"));
+        assert!(valid_recipe_name("DraftPortrait"));
+        assert!(valid_recipe_name("BalancedPortrait"));
+        assert!(valid_recipe_name("HighPortrait"));
+    }
+
+    #[test]
+    fn rejects_malformed_recipe_names() {
+        assert!(!valid_recipe_name(""));
+        assert!(!valid_recipe_name("../model"));
+        assert!(!valid_recipe_name("Balanced Landscape"));
+        assert!(!valid_recipe_name("Bal-anced"));
+        assert!(!valid_recipe_name(&"A".repeat(33)));
+        assert!(valid_recipe_name(&"A".repeat(32)));
     }
 }

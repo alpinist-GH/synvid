@@ -26,10 +26,21 @@ class LtxProviderError(RuntimeError):
 # Quality-approved recipe shapes (docs/measurements/stage7-story-render-compose-2026-08-09.md
 # and earlier LTX gates). Only resolution/frames/fps/steps/guidance/dtype are
 # trusted here; calibrate() measures the memory/disk numbers fresh.
+#
+# The *Landscape/*Portrait entries are shape-sanity-checked only (32px-aligned,
+# exact 16:9/9:16), not yet visually quality-reviewed on real hardware like the
+# three square recipes above. They become usable once a real calibrate() run
+# on a real Mac succeeds and their output has been reviewed.
 CALIBRATION_RECIPES: dict[str, dict[str, object]] = {
     "Draft": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
     "Balanced": {"width": 256, "height": 256, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
     "High": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},
+    "DraftLandscape": {"width": 512, "height": 288, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
+    "BalancedLandscape": {"width": 512, "height": 288, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
+    "HighLandscape": {"width": 512, "height": 288, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},
+    "DraftPortrait": {"width": 288, "height": 512, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
+    "BalancedPortrait": {"width": 288, "height": 512, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
+    "HighPortrait": {"width": 288, "height": 512, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},
 }
 
 # Derived from this model's measured ~28-31 GiB peak RSS across recipes, plus margin.
@@ -76,7 +87,7 @@ class LtxMeasuredRecipes:
             recipes = {
                 name: LtxMeasuredProfile(**value)
                 for name, value in raw["recipes"].items()
-                if name in {"Draft", "Balanced", "High"} and isinstance(value, dict)
+                if name in CALIBRATION_RECIPES and isinstance(value, dict)
             }
             if not recipes or "Balanced" not in recipes:
                 raise ValueError("measured recipes must include Balanced")

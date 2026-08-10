@@ -127,6 +127,15 @@
             </div>
             <p id="recipe-note" class="field-help">Balanced is the only measured LTX recipe currently available.</p>
           </fieldset>
+          <fieldset>
+            <legend>Aspect ratio</legend>
+            <div id="aspect-buttons" class="recipe-buttons" role="radiogroup" aria-label="Aspect ratio">
+              <button type="button" data-aspect="Square" role="radio" aria-checked="true">Square</button>
+              <button type="button" data-aspect="Landscape" role="radio" aria-checked="false">Landscape</button>
+              <button type="button" data-aspect="Portrait" role="radio" aria-checked="false">Portrait</button>
+            </div>
+            <p class="field-help">Each aspect ratio needs its own measured profile. Calibrate it in Settings before it can be generated.</p>
+          </fieldset>
           <details id="advanced">
             <summary>Advanced</summary>
             <p id="advanced-note" class="field-help">No custom overrides are available until they pass the same measured-profile gate. This protects output validity.</p>
