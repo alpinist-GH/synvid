@@ -5,7 +5,9 @@ set -eu
 # .app and DMG. Does NOT notarize; that remains a separate explicitly
 # authorized step. Every nested Mach-O is signed before the outer app is
 # signed, and the outer app is signed before the DMG is created and signed,
-# per Apple's inside-out signing requirement.
+# per Apple's inside-out signing requirement. Signatures use a secure
+# timestamp (network call to Apple's TSA) because the notary service rejects
+# any signature that lacks one.
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 signing_identity=${SYNVID_SIGNING_IDENTITY:?"set SYNVID_SIGNING_IDENTITY to the Developer ID Application identity (name or SHA-1)"}
@@ -43,21 +45,21 @@ find "$destination_worker" -type f \( -perm -u+x -o -name "*.dylib" -o -name "*.
     | cut -d: -f1 > "$work_dir/macho-files.txt" || true
 wc -l < "$work_dir/macho-files.txt"
 while IFS= read -r f; do
-    codesign --force --options runtime --timestamp=none \
+    codesign --force --options runtime --timestamp \
         --entitlements "$entitlements" \
         --sign "$signing_identity" "$f"
 done < "$work_dir/macho-files.txt"
 
 echo "signing Frameworks..."
 find "$destination_worker" -type d -name "*.framework" -print0 | while IFS= read -r -d '' fw; do
-    codesign --force --options runtime --timestamp=none \
+    codesign --force --options runtime --timestamp \
         --entitlements "$entitlements" \
         --sign "$signing_identity" "$fw"
 done
 
 echo "signing outer app bundle..."
 find "$app_bundle" -type f -name .DS_Store -delete
-codesign --force --options runtime --timestamp=none \
+codesign --force --options runtime --timestamp \
     --entitlements "$entitlements" \
     --sign "$signing_identity" "$app_bundle"
 
@@ -72,7 +74,7 @@ hdiutil create -volname SynVid -srcfolder "$dmg_stage_dir" -fs APFS -ov -format 
 test -s "$dmg_path"
 
 echo "signing DMG..."
-codesign --force --timestamp=none --sign "$signing_identity" "$dmg_path"
+codesign --force --timestamp --sign "$signing_identity" "$dmg_path"
 codesign --verify --verbose=2 "$dmg_path"
 
 printf '%s\n' "signed app: $app_bundle" "signed unnotarized DMG: $dmg_path"
