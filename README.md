@@ -122,12 +122,13 @@ Three scripts, in increasing order of what they produce:
   notary service, staples the ticket, and validates the result with
   `stapler` and `spctl`, producing
   `dist/release/SynVid-0.1.0-notarized.dmg`. Requires a notarytool keychain
-  profile and `SYNVID_NOTARY_PROFILE` set to its name:
+  profile; defaults to a profile named `synvid-notary`, overridable with
+  `SYNVID_NOTARY_PROFILE`:
 
   ```sh
-  xcrun notarytool store-credentials PROFILE_NAME \
+  xcrun notarytool store-credentials synvid-notary \
     --apple-id you@example.com --team-id TEAMID --password app-specific-password
-  SYNVID_NOTARY_PROFILE=PROFILE_NAME ./scripts/notarize-release-dmg.sh
+  ./scripts/notarize-release-dmg.sh
   ```
 
   This step uploads the DMG to Apple and is never run automatically by any
