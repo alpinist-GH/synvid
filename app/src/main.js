@@ -37,7 +37,6 @@ const modelDownloadProgress = $("#model-download-progress");
 const modelDownloadStatus = $("#model-download-status");
 const modelCalibrationProgress = $("#model-calibration-progress");
 const modelCalibrationStatus = $("#model-calibration-status");
-const DEBUG_LOG_WINDOW_KEY = "synvid.debug-log-window.v1";
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
 function appConfirm(message) {
@@ -442,19 +441,9 @@ async function runCalibration(model, recipeName, reference, button) {
   } catch (reason) { setError(String(reason)); button.disabled = false; }
 }
 async function showSettings() {
-  const dialog = $("#settings-dialog"); $("#debug-log-window").checked = localStorage.getItem(DEBUG_LOG_WINDOW_KEY) === "true"; $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
+  const dialog = $("#settings-dialog"); $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
   try { const { models = [] } = await invoke("model_catalog"); renderModelCatalog(models); }
   catch (reason) { $("#model-list").textContent = "Model catalog unavailable while the worker is disconnected."; setError(String(reason)); }
-}
-async function setDebugLogWindow(enabled) {
-  localStorage.setItem(DEBUG_LOG_WINDOW_KEY, String(enabled));
-  try {
-    await invoke("set_debug_log_window", { enabled });
-  } catch (reason) {
-    $("#debug-log-window").checked = !enabled;
-    localStorage.setItem(DEBUG_LOG_WINDOW_KEY, String(!enabled));
-    $("#cleanup-status").textContent = `Debug log window could not be ${enabled ? "opened" : "closed"}: ${String(reason)}`;
-  }
 }
 async function showAbout() {
   const dialog = $("#about-dialog"); $("#about-version").textContent = "Version…"; dialog.showModal();
@@ -623,7 +612,6 @@ $("#clean-temporary").addEventListener("click", async () => {
   catch (reason) { $("#cleanup-status").textContent = `Cleanup could not run: ${String(reason)}`; }
   finally { button.disabled = false; }
 });
-$("#debug-log-window").addEventListener("change", (event) => { void setDebugLogWindow(event.target.checked); });
 let diagnosticsText = "";
 $("#preview-diagnostics").addEventListener("click", async () => {
   const button = $("#preview-diagnostics"); button.disabled = true;
@@ -658,4 +646,3 @@ generateButton.addEventListener("click", async () => {
 });
 cancelButton.addEventListener("click", async () => { if (!state.activeJob) return; cancelButton.disabled = true; jobStatus.textContent = "Cancelling generation…"; try { await invoke("cancel", { jobId: state.activeJob.job_id || state.activeJob.jobId }); } catch (reason) { setError(String(reason)); } finally { cancelButton.disabled = false; } });
 void refresh(); window.setInterval(() => void refresh(), 750);
-if (localStorage.getItem(DEBUG_LOG_WINDOW_KEY) === "true") void invoke("set_debug_log_window", { enabled: true }).catch(() => {});
