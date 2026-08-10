@@ -423,3 +423,11 @@ build-output tree, not yet embedded inside the shipped `.app`.
 traces back to a dated stage entry there with its measured evidence. Read
 it before changing behavior described in this document; update both
 together.
+
+## License
+
+SynVid's own source code is licensed under the [Apache License 2.0](LICENSE).
+This covers the app and worker code in this repository only — it does not
+extend to third-party models (several are gated, non-commercial, or
+territory-restricted; see the model table above) or to the GPL-family
+components noted under "SBOM and third-party notices."
