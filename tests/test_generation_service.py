@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import json
 import tempfile
 import threading
@@ -8,10 +9,50 @@ from pathlib import Path
 from worker.jobs import BusyError, JobState
 from worker.paths import AppPaths
 from worker.providers.fake import FakeProvider
-from worker.providers.base import Capability, ProviderFacts
+from worker.providers.base import Capability, ProgressCallback, ProviderFacts
 from worker.resources import Estimate
 from worker.service import GenerationError, GenerationService
 from worker.stories import StoryConflict, StoryError
+from typing import Callable
+
+
+@dataclass
+class CalibratableFakeProvider:
+    """A fixture calibratable provider; mirrors real providers' recipes-wrapper merge."""
+
+    mode: str = "success"
+    facts: ProviderFacts = ProviderFacts(
+        provider_id="fake-calibratable",
+        capabilities=frozenset({Capability.VIDEO_GENERATION}),
+        profile="shareable",
+        revision="fixture-v1",
+        license_name="test-only",
+        requires_access_confirmation=False,
+        calibration_recipes=frozenset({"Balanced", "Draft"}),
+    )
+    unloaded: bool = False
+    calibrate_started: threading.Event = field(default_factory=threading.Event)
+
+    def run(self, request, progress, cancelled) -> dict[str, str]:
+        raise NotImplementedError("fixture provider only calibrates")
+
+    def calibrate(self, recipe_name: str, existing_raw: dict | None, progress: ProgressCallback, cancelled: Callable[[], bool]) -> dict[str, object]:
+        self.calibrate_started.set()
+        if self.mode == "failure":
+            raise RuntimeError("fixture calibration failed")
+        if self.mode == "hang":
+            while not cancelled():
+                time.sleep(0.01)
+            raise InterruptedError("fixture calibration cancelled")
+        recipes = dict(existing_raw.get("recipes", {})) if isinstance(existing_raw, dict) else {}
+        recipes[recipe_name] = {
+            "width": 64, "height": 64, "steps": 4, "guidance_scale": 1.0,
+            "dtype": "bfloat16", "estimated_disk_bytes": 1, "peak_rss_bytes": 1,
+        }
+        return {"recipes": recipes}
+
+    def unload(self) -> None:
+        self.unloaded = True
 
 
 class GenerationServiceTests(unittest.TestCase):
@@ -428,3 +469,66 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(metadata["lineage"], [{"output_id": source_dir.name, "relation": "edited_from"}])
             self.assertEqual(provider.request.source_image, source_dir / "image.png")
             self.assertTrue((source_dir / "image.png").is_file())
+
+
+class CalibrationServiceTests(unittest.TestCase):
+    def _service(self, root, calibratable):
+        return GenerationService(AppPaths.under(Path(root)), FakeProvider(), Estimate(1, True), additional_providers=(calibratable,))
+
+    def test_writes_measured_profile_atomically_on_success_and_unloads_other_providers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calibratable = CalibratableFakeProvider()
+            service = self._service(temp, calibratable)
+            terminal = threading.Event(); received = []
+            service.submit_calibration("fake-calibratable", "Balanced", lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()))
+            self.assertTrue(terminal.wait(2))
+            self.assertEqual(received[0][0].state, JobState.SUCCEEDED)
+            self.assertTrue(service.provider.unloaded)  # the OTHER resident provider, not the one calibrating
+            profile_path = service.paths.models / "fake-calibratable" / "measured-profile.json"
+            content = json.loads(profile_path.read_text())
+            self.assertEqual(content["recipes"]["Balanced"]["width"], 64)
+
+    def test_merges_a_second_recipe_without_clobbering_the_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calibratable = CalibratableFakeProvider()
+            service = self._service(temp, calibratable)
+            for recipe in ("Balanced", "Draft"):
+                terminal = threading.Event()
+                service.submit_calibration("fake-calibratable", recipe, lambda _job: None, lambda _job, _output: terminal.set())
+                self.assertTrue(terminal.wait(2))
+            profile_path = service.paths.models / "fake-calibratable" / "measured-profile.json"
+            content = json.loads(profile_path.read_text())
+            self.assertEqual(set(content["recipes"]), {"Balanced", "Draft"})
+
+    def test_rejects_a_recipe_the_provider_does_not_calibrate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp, CalibratableFakeProvider())
+            with self.assertRaises(GenerationError):
+                service.submit_calibration("fake-calibratable", "High", lambda _job: None, lambda _job, _output: None)
+
+    def test_rejects_unknown_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp, CalibratableFakeProvider())
+            with self.assertRaises(GenerationError):
+                service.submit_calibration("not-a-real-model", "Balanced", lambda _job: None, lambda _job, _output: None)
+
+    def test_failure_leaves_any_existing_profile_untouched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calibratable = CalibratableFakeProvider(mode="failure")
+            service = self._service(temp, calibratable)
+            profile_path = service.paths.models / "fake-calibratable" / "measured-profile.json"
+            terminal = threading.Event(); received = []
+            service.submit_calibration("fake-calibratable", "Balanced", lambda _job: None, lambda job, output: (received.append((job, output)), terminal.set()))
+            self.assertTrue(terminal.wait(2))
+            self.assertEqual(received[0][0].state, JobState.FAILED)
+            self.assertFalse(profile_path.exists())
+
+    def test_respects_single_active_job_admission(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calibratable = CalibratableFakeProvider(mode="hang")
+            service = self._service(temp, calibratable)
+            first = service.submit_calibration("fake-calibratable", "Balanced", lambda _job: None, lambda _job, _output: None)
+            self.assertTrue(calibratable.calibrate_started.wait(2))
+            with self.assertRaises(BusyError):
+                service.submit_calibration("fake-calibratable", "Balanced", lambda _job: None, lambda _job, _output: None)
+            service.cancel(first.job_id)

@@ -10,15 +10,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import tempfile
 from typing import Callable
 
+from ..measurement import peak_rss_bytes, total_system_memory_bytes
 from ..model_security import ModelSecurityError, verify_tree
 from ..models import REGISTRY, ModelSpec
-from .base import Capability, OperationRequest, ProgressCallback, ProviderFacts
+from .base import Capability, InsufficientMemoryError, OperationRequest, ProgressCallback, ProviderFacts
 
 
 class LtxProviderError(RuntimeError):
     pass
+
+
+# Quality-approved recipe shapes (docs/measurements/stage7-story-render-compose-2026-08-09.md
+# and earlier LTX gates). Only resolution/frames/fps/steps/guidance/dtype are
+# trusted here; calibrate() measures the memory/disk numbers fresh.
+CALIBRATION_RECIPES: dict[str, dict[str, object]] = {
+    "Draft": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
+    "Balanced": {"width": 256, "height": 256, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
+    "High": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},
+}
+
+# Derived from this model's measured ~28-31 GiB peak RSS across recipes, plus margin.
+MIN_SYSTEM_MEMORY_BYTES = 36 * 1024**3
+
+_CALIBRATION_PROMPT = "A yellow flower gently moving in a spring breeze"
 
 
 @dataclass(frozen=True)
@@ -76,6 +93,7 @@ class LtxProvider:
         revision=REGISTRY["ltx-video"].revision,
         license_name=REGISTRY["ltx-video"].license_name,
         requires_access_confirmation=True,
+        calibration_recipes=frozenset(CALIBRATION_RECIPES),
     )
 
     def __init__(self, model_root: Path, measured_profile: Path):
@@ -149,6 +167,67 @@ class LtxProvider:
         if preprocessing is not None:
             result["preprocessing"] = preprocessing
         return result
+
+    def calibration_reference(self, recipe_name: str) -> dict[str, object] | None:
+        """Static shape/memory-floor facts for the UI, before any run starts."""
+        shape = CALIBRATION_RECIPES.get(recipe_name)
+        if shape is None:
+            return None
+        return {**shape, "min_system_memory_bytes": MIN_SYSTEM_MEMORY_BYTES}
+
+    def calibrate(self, recipe_name: str, existing_profile_raw: dict | None, progress: ProgressCallback, cancelled: Callable[[], bool]) -> dict[str, object]:
+        """Measure a fixed, quality-approved recipe shape on this Mac.
+
+        Returns the complete new measured-profile.json content, merging this
+        recipe into any other already-measured recipes.
+        """
+        shape = CALIBRATION_RECIPES.get(recipe_name)
+        if shape is None:
+            raise LtxProviderError(f"{recipe_name!r} has no quality-approved calibration recipe for LTX")
+        available = total_system_memory_bytes()
+        if available < MIN_SYSTEM_MEMORY_BYTES:
+            raise InsufficientMemoryError(
+                f"this Mac has {available / 1024**3:.1f} GiB of memory; the {recipe_name} "
+                f"LTX recipe needs at least {MIN_SYSTEM_MEMORY_BYTES / 1024**3:.1f} GiB"
+            )
+        if cancelled():
+            raise InterruptedError("calibration cancelled before model load")
+
+        progress(0.05, "Loading LTX Video pipeline")
+        pipeline = self._load(shape["dtype"])
+        import torch
+        from diffusers.utils import export_to_video
+
+        generator = torch.Generator(device="cpu").manual_seed(42)
+
+        def on_step_end(_pipe, step, _timestep, callback_kwargs):
+            if cancelled():
+                raise InterruptedError("calibration cancelled")
+            progress(0.05 + 0.85 * (step + 1) / shape["steps"], f"calibration step {step + 1}/{shape['steps']}")
+            return callback_kwargs
+
+        result = pipeline(
+            prompt=_CALIBRATION_PROMPT, width=shape["width"], height=shape["height"],
+            num_frames=shape["frames"], frame_rate=shape["fps"],
+            num_inference_steps=shape["steps"], guidance_scale=shape["guidance_scale"],
+            generator=generator, callback_on_step_end=on_step_end,
+        )
+        if cancelled():
+            raise InterruptedError("calibration cancelled")
+        progress(0.95, "Encoding calibration output")
+        with tempfile.TemporaryDirectory() as scratch:
+            export_to_video(result.frames[0], f"{scratch}/calibration.mp4", fps=shape["fps"])
+
+        measured = {
+            "width": shape["width"], "height": shape["height"], "frames": shape["frames"],
+            "fps": shape["fps"], "steps": shape["steps"], "guidance_scale": shape["guidance_scale"],
+            "dtype": shape["dtype"],
+            "estimated_disk_bytes": sum(path.stat().st_size for path in self._model_root.rglob("*") if path.is_file()),
+            "peak_rss_bytes": peak_rss_bytes(),
+        }
+        recipes = dict(existing_profile_raw.get("recipes", {})) if isinstance(existing_profile_raw, dict) else {}
+        recipes[recipe_name] = measured
+        return {"recipes": recipes, "schema_version": 2}
 
     @staticmethod
     def _preprocess_video(

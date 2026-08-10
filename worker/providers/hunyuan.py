@@ -10,15 +10,41 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import tempfile
+import time
 from typing import Callable
 
+from ..measurement import MpsMemoryPoller, peak_rss_bytes, total_system_memory_bytes
 from ..model_security import ModelSecurityError, verify_tree
 from ..models import REGISTRY, ModelSpec
-from .base import Capability, OperationRequest, ProgressCallback, ProviderFacts
+from .base import Capability, InsufficientMemoryError, OperationRequest, ProgressCallback, ProviderFacts
 
 
 class HunyuanProviderError(RuntimeError):
     pass
+
+
+# Quality-approved recipe shapes, established by a human-inspected MPS gate
+# (docs/measurements/hunyuan15-480p-t2v-mps-gate-2026-08-09.md). I2V has
+# never been gated and has no recipe here, so it stays uncalibratable.
+CALIBRATION_RECIPES: dict[str, dict[str, dict[str, object]]] = {
+    "hunyuan15-480p-t2v": {
+        "Balanced": {
+            "width": 848, "height": 480, "frames": 25, "fps": 24,
+            "steps": 20, "guidance_scale": 6.0, "dtype": "bfloat16",
+        },
+    },
+}
+
+# Derived from the 34.3 GiB peak MPS allocation measured for the Balanced
+# recipe on the gate's reference Mac, plus a safety margin. A 61-frame
+# candidate at the same resolution thrashed that Mac's unified memory, so
+# this floor is intentionally conservative rather than the bare minimum.
+MIN_SYSTEM_MEMORY_BYTES: dict[str, int] = {
+    "hunyuan15-480p-t2v": 40 * 1024**3,
+}
+
+_CALIBRATION_PROMPT = "A yellow flower gently moving in a spring breeze"
 
 
 @dataclass(frozen=True)
@@ -34,7 +60,6 @@ class HunyuanMeasuredProfile:
     peak_rss_bytes: int
     peak_mps_allocated_bytes: int = 0
     wall_time_seconds: float = 0.0
-    test_only: bool = False
 
     @classmethod
     def from_json(cls, path: Path) -> "HunyuanMeasuredProfile":
@@ -49,9 +74,9 @@ class HunyuanMeasuredProfile:
             raise HunyuanProviderError("missing or invalid measured Hunyuan profile") from error
         required = (
             profile.width, profile.height, profile.frames, profile.fps,
-            profile.steps, profile.estimated_disk_bytes,
+            profile.steps, profile.estimated_disk_bytes, profile.peak_rss_bytes,
         )
-        if min(required) <= 0 or (not profile.test_only and profile.peak_rss_bytes <= 0):
+        if min(required) <= 0:
             raise HunyuanProviderError("measured Hunyuan profile contains an invalid value")
         if profile.dtype not in {"float16", "bfloat16"} or profile.guidance_scale < 0:
             raise HunyuanProviderError("measured Hunyuan profile contains an unsupported strategy")
@@ -76,6 +101,7 @@ class HunyuanVideo15Provider:
             revision=spec.revision,
             license_name=spec.license_name,
             requires_access_confirmation=spec.requires_access_confirmation,
+            calibration_recipes=frozenset(CALIBRATION_RECIPES.get(model_id, {})),
         )
         self._model_root = model_root
         self._measured_profile_path = measured_profile
@@ -89,19 +115,6 @@ class HunyuanVideo15Provider:
         return HunyuanMeasuredRecipes({"Balanced": self.measured_profile()})
 
     def measured_profile(self) -> HunyuanMeasuredProfile:
-        if not self._measured_profile_path.exists():
-            return HunyuanMeasuredProfile(
-                width=848,
-                height=480,
-                frames=121,
-                fps=24,
-                steps=50,
-                guidance_scale=0.0,
-                dtype="bfloat16",
-                estimated_disk_bytes=int(self.spec.expected_size_gib * 1024**3),
-                peak_rss_bytes=0,
-                test_only=True,
-            )
         return HunyuanMeasuredProfile.from_json(self._measured_profile_path)
 
     def run(
@@ -162,6 +175,86 @@ class HunyuanVideo15Provider:
         progress(0.95, "Encoding HunyuanVideo output")
         export_to_video(result.frames[0], str(request.output_dir / "video.mp4"), fps=request.fps)
         return {"media_file": "video.mp4", "native_fps": str(request.fps)}
+
+    def calibration_reference(self, recipe_name: str) -> dict[str, object] | None:
+        """Static shape/memory-floor facts for the UI, before any run starts."""
+        shape = CALIBRATION_RECIPES.get(self._model_id, {}).get(recipe_name)
+        if shape is None:
+            return None
+        return {**shape, "min_system_memory_bytes": MIN_SYSTEM_MEMORY_BYTES[self._model_id]}
+
+    def calibrate(
+        self,
+        recipe_name: str,
+        existing_profile_raw: dict | None,
+        progress: ProgressCallback,
+        cancelled: Callable[[], bool],
+    ) -> dict[str, object]:
+        """Measure a fixed, quality-approved recipe shape on this Mac.
+
+        Only the resolution/frames/steps/dtype/guidance shape is trusted from
+        CALIBRATION_RECIPES (established by a human-inspected gate); every
+        number in the returned profile is freshly measured on this machine.
+        Returns the complete new measured-profile.json content (merging this
+        recipe into any other already-measured recipes), so the caller can
+        write it without knowing this provider's on-disk schema.
+        """
+        shape = CALIBRATION_RECIPES.get(self._model_id, {}).get(recipe_name)
+        if shape is None:
+            raise HunyuanProviderError(f"{recipe_name!r} has no quality-approved calibration recipe for this model")
+        minimum = MIN_SYSTEM_MEMORY_BYTES[self._model_id]
+        available = total_system_memory_bytes()
+        if available < minimum:
+            raise InsufficientMemoryError(
+                f"this Mac has {available / 1024**3:.1f} GiB of memory; the {recipe_name} "
+                f"recipe for {self._model_id} needs at least {minimum / 1024**3:.1f} GiB"
+            )
+        if cancelled():
+            raise InterruptedError("calibration cancelled before model load")
+
+        progress(0.05, "Loading HunyuanVideo 1.5 pipeline")
+        pipeline = self._load(shape["dtype"])
+        import torch
+        from diffusers.utils import export_to_video
+
+        generator = torch.Generator(device="cpu").manual_seed(42)
+        arguments = {
+            "prompt": _CALIBRATION_PROMPT,
+            "width": shape["width"],
+            "height": shape["height"],
+            "num_frames": shape["frames"],
+            "num_inference_steps": shape["steps"],
+            "generator": generator,
+        }
+        started = time.monotonic()
+        with MpsMemoryPoller() as poller:
+            result = pipeline(**arguments)
+            if cancelled():
+                raise InterruptedError("calibration cancelled")
+            wall_time_seconds = time.monotonic() - started
+            progress(0.9, "Encoding calibration output")
+            with tempfile.TemporaryDirectory() as scratch:
+                export_to_video(result.frames[0], f"{scratch}/calibration.mp4", fps=shape["fps"])
+
+        measured = {
+            "width": shape["width"],
+            "height": shape["height"],
+            "frames": shape["frames"],
+            "fps": shape["fps"],
+            "steps": shape["steps"],
+            "guidance_scale": shape["guidance_scale"],
+            "dtype": shape["dtype"],
+            "estimated_disk_bytes": self._tree_size(),
+            "peak_rss_bytes": peak_rss_bytes(),
+            "peak_mps_allocated_bytes": poller.peak_bytes,
+            "wall_time_seconds": wall_time_seconds,
+        }
+        recipes = dict(existing_profile_raw.get("recipes", {})) if isinstance(existing_profile_raw, dict) else {}
+        recipes[recipe_name] = measured
+        return {"recipes": recipes, "schema_version": 2}
+
+    def _tree_size(self) -> int:
+        return sum(path.stat().st_size for path in self._model_root.rglob("*") if path.is_file())
 
     def _load(self, dtype_name: str):
         if self._pipeline is not None:

@@ -734,6 +734,33 @@ fn download_model(
 }
 
 #[tauri::command]
+fn calibrate_model(
+    model_id: String,
+    recipe: String,
+    supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
+) -> Result<Value, String> {
+    if model_id.len() > 64
+        || !model_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err("Invalid model calibration request.".into());
+    }
+    if recipe.len() > 32 || !recipe.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err("Invalid calibration recipe name.".into());
+    }
+    response_payload(
+        supervisor
+            .lock()
+            .expect("worker supervisor lock poisoned")
+            .request(
+                "calibrate_model",
+                json!({"model_id": model_id, "recipe": recipe}),
+            )?,
+    )
+}
+
+#[tauri::command]
 fn remove_model(
     model_id: String,
     supervisor: tauri::State<'_, Mutex<WorkerSupervisor>>,
@@ -1310,6 +1337,7 @@ pub fn run() {
             delete_output,
             model_catalog,
             download_model,
+            calibrate_model,
             remove_model,
             clean_temporary,
             output_media_path,

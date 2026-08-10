@@ -20,7 +20,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -35,6 +35,8 @@ const error = $("#form-error");
 const generationProgress = $("#generation-progress");
 const modelDownloadProgress = $("#model-download-progress");
 const modelDownloadStatus = $("#model-download-status");
+const modelCalibrationProgress = $("#model-calibration-progress");
+const modelCalibrationStatus = $("#model-calibration-status");
 const DEBUG_LOG_WINDOW_KEY = "synvid.debug-log-window.v1";
 
 function setError(message = "") { error.textContent = message; error.hidden = !message; }
@@ -125,6 +127,18 @@ function renderModelDownloadProgress(job) {
   modelDownloadProgress.setAttribute("aria-valuetext", `${percent}%`);
   $("#model-download-status-text").textContent = `${job.status_text || job.statusText || "Downloading model"} · ${percent}%`;
 }
+function renderCalibrationProgress(job) {
+  const calibrating = job?.operation === "calibrate" || (job && state.calibrationJobId === (job.job_id || job.jobId));
+  modelCalibrationStatus.hidden = !calibrating;
+  if (!calibrating) {
+    modelCalibrationProgress.value = 0;
+    return;
+  }
+  const percent = Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
+  modelCalibrationProgress.value = percent;
+  modelCalibrationProgress.setAttribute("aria-valuetext", `${percent}%`);
+  $("#model-calibration-status-text").textContent = `${job.status_text || job.statusText || "Calibrating model"} · ${percent}%`;
+}
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
@@ -155,11 +169,12 @@ function setRecipe(recipe) {
   for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === recipe));
   const profile = activeProfile();
   $("#recipe-note").textContent = profile
-    ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; ${profile.test_only ? "experimental test profile, not measured on this Mac." : "measured on this Mac."}`
+    ? `${recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.`
     : `${recipe} has not been measured on this Mac.`;
   $("#advanced-note").textContent = "Custom overrides are unavailable: only the measured recipe map may be submitted.";
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
+function hasUncalibratedRecipe(model) { return Object.values(model?.calibration || {}).some((info) => !info.measured); }
 function updateControls() {
   const model = selectedModel(); const profile = activeProfile();
   const installed = Boolean(model?.installed);
@@ -169,8 +184,9 @@ function updateControls() {
   if (!state.activeJob) {
     if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
     else if (!installed) jobStatus.textContent = "Install the selected local model before generating.";
-    else if (!profile) jobStatus.textContent = selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.";
-    else if (profile.test_only) jobStatus.textContent = "Experimental test profile ready. Results are not yet validated on this Mac.";
+    else if (!profile) jobStatus.textContent = hasUncalibratedRecipe(model)
+      ? "This model needs on-device calibration before it can generate. Open Settings to calibrate it."
+      : (selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.");
     else if (state.modelId === "wan2.2-ti2v-5b") jobStatus.textContent = "Ready for experimental Wan 2.2 testing. The measured output has not passed the quality gate.";
     else jobStatus.textContent = "Ready to generate locally.";
   }
@@ -252,6 +268,12 @@ function recordTerminal(events) {
       state.downloadModelJobId = null;
       jobStatus.textContent = payload.error || `Model download ${payload.state}.`;
       if (payload.state === "succeeded" && $("#settings-dialog").open) void showSettings();
+    } else if (payload.operation === "calibrate") {
+      state.calibrationJobId = null;
+      jobStatus.textContent = payload.state === "succeeded"
+        ? "Calibration complete. This recipe is now measured and ready to generate."
+        : (payload.error || `Calibration ${payload.state}.`);
+      if ($("#settings-dialog").open) void showSettings();
     } else if (payload.state) jobStatus.textContent = payload.error || `Generation ${payload.state}.`;
   }
 }
@@ -259,9 +281,10 @@ async function refresh() {
   try {
     const status = await invoke("worker_status"); state.connected = status.connected; state.models = status.availableModels; state.recipes = status.measuredRecipes; state.activeJob = status.activeJob;
     if (state.activeJob?.operation === "model_download") state.downloadModelJobId = state.activeJob.job_id || state.activeJob.jobId;
+    if (state.activeJob?.operation === "calibrate") state.calibrationJobId = state.activeJob.job_id || state.activeJob.jobId;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
     if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
-    recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); void maybeShowRequiredModelSetup();
+    recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); renderCalibrationProgress(state.activeJob); void maybeShowRequiredModelSetup();
   } catch { state.connected = false; connection.textContent = "Worker unavailable"; updateControls(); }
 }
 async function maybeShowRequiredModelSetup() {
@@ -272,7 +295,7 @@ async function maybeShowRequiredModelSetup() {
     requiredModel = (response.models || []).find((model) => model.model_id === "ltx-video") || null;
     if (!requiredModel) return;
     $("#required-model-copy").textContent = requiredModel.installed
-      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Generation remains disabled until it is validated."
+      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Open Settings and calibrate it before generating."
       : "LTX Video is required before SynVid can create video on this Mac.";
     $("#required-model-facts").textContent = "Model: " + requiredModel.display_name + " · " + requiredModel.expected_size_gib + " GB expected · " + requiredModel.license + " · revision " + requiredModel.revision;
     $("#download-required-model").hidden = Boolean(requiredModel.installed);
@@ -388,8 +411,35 @@ function renderModelCatalog(models) {
       });
       item.append(download);
     }
+    if (model.installed && model.calibration) {
+      for (const [recipeName, info] of Object.entries(model.calibration)) {
+        if (info.measured || !info.reference) continue;
+        const calibrate = document.createElement("button"); calibrate.type = "button"; calibrate.textContent = `Calibrate ${recipeName}…`;
+        calibrate.addEventListener("click", () => void runCalibration(model, recipeName, info.reference, calibrate));
+        item.append(calibrate);
+      }
+    }
     list.append(item);
   }
+}
+async function runCalibration(model, recipeName, reference, button) {
+  const frames = reference.frames ? `${reference.frames} frames at ${reference.fps} fps, ` : "";
+  const minGiB = Math.ceil((reference.min_system_memory_bytes || 0) / 1024 ** 3);
+  const message = `Calibrate ${model.display_name} (${recipeName})?\n\n`
+    + `This runs a real ${reference.width} × ${reference.height}, ${frames}${reference.steps}-step generation on this Mac to measure `
+    + `its own memory use and speed. It can take many minutes, and SynVid will be unusable for anything else while it runs.\n\n`
+    + `This Mac needs at least ${minGiB} GB of memory for this recipe. These numbers were measured on the developer's own Mac; `
+    + `yours may take more or less time.`;
+  const approved = await appConfirm(message);
+  if (!approved) return;
+  button.disabled = true;
+  try {
+    const accepted = await invoke("calibrate_model", { modelId: model.model_id, recipe: recipeName });
+    state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "calibrate", status_text: `Calibrating ${model.display_name}`, progress: 0 };
+    state.calibrationJobId = state.activeJob.job_id;
+    jobStatus.textContent = `Calibrating ${model.display_name}…`;
+    updateControls();
+  } catch (reason) { setError(String(reason)); button.disabled = false; }
 }
 async function showSettings() {
   const dialog = $("#settings-dialog"); $("#debug-log-window").checked = localStorage.getItem(DEBUG_LOG_WINDOW_KEY) === "true"; $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();

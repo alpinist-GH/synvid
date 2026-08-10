@@ -19,6 +19,15 @@ class Capability(StrEnum):
 ProgressCallback = Callable[[float, str], None]
 
 
+class InsufficientMemoryError(RuntimeError):
+    """Raised by calibrate() when this Mac does not meet a recipe's memory floor.
+
+    Raised before the pipeline is touched, so a calibration attempt on an
+    under-provisioned Mac never risks the memory-thrashing a real generation
+    run could cause.
+    """
+
+
 @dataclass(frozen=True)
 class ProviderFacts:
     provider_id: str
@@ -27,6 +36,11 @@ class ProviderFacts:
     revision: str
     license_name: str
     requires_access_confirmation: bool
+    # Recipe names (e.g. "Draft"/"Balanced"/"High") this provider can
+    # calibrate on-device. Empty for providers with no quality-approved
+    # recipe shape (e.g. Wan, whose quality gate failed) — calibrate() is
+    # only present on providers that populate this.
+    calibration_recipes: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

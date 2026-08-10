@@ -6,22 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import resource
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from worker.measurement import peak_rss_bytes
 from worker.model_security import verify_tree
 from worker.models import REGISTRY
-
-
-def _peak_rss_bytes() -> int:
-    # macOS reports ru_maxrss in bytes; Linux reports KiB. SynVid's v1 target
-    # is macOS, but retain a portable conversion for host-only test runs.
-    value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return value if sys.platform == "darwin" else value * 1024
 
 
 def main() -> int:
@@ -110,7 +103,7 @@ def main() -> int:
         "strategy": args.strategy,
         "model": args.model,
         "estimated_disk_bytes": sum(path.stat().st_size for path in model_root.rglob("*") if path.is_file()),
-        "peak_rss_bytes": _peak_rss_bytes(),
+        "peak_rss_bytes": peak_rss_bytes(),
         "peak_mps_allocated_bytes": peak_mps_allocated_bytes,
         "wall_time_seconds": elapsed_seconds,
         "ffprobe": json.loads(ffprobe.stdout),

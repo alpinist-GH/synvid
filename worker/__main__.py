@@ -197,6 +197,18 @@ def serve() -> int:
                     _reply(request, "terminal", payload)
                 job = service.submit_model_download(model_id, progress, terminal)
                 _reply(request, "accepted", {"job_id": job.job_id})
+            elif request.kind == "calibrate_model":
+                model_id = request.payload.get("model_id")
+                recipe = request.payload.get("recipe")
+                if not isinstance(model_id, str) or not isinstance(recipe, str):
+                    raise ProtocolError("calibrate_model requires a model ID and recipe name")
+                def progress(job): _reply(request, "progress", service._job_payload(job))
+                def terminal(job, output):
+                    payload = service._job_payload(job)
+                    if output: payload.update(output)
+                    _reply(request, "terminal", payload)
+                job = service.submit_calibration(model_id, recipe, progress, terminal)
+                _reply(request, "accepted", {"job_id": job.job_id})
             elif request.kind == "remove_model":
                 _reply(request, "status", service.remove_model(request.payload.get("model_id")))
             elif request.kind == "clean_temporary":

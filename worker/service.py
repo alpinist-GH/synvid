@@ -438,6 +438,7 @@ class GenerationService:
                 "measured_recipes": recipes,
                 "measured_image_profile": image,
                 "reason": spec.reason if spec else "Runtime test provider.",
+                "calibration": self._calibration_info(provider, recipes, image),
             }
         return {
             "active_job": self._job_payload(current) if current else None,
@@ -461,6 +462,47 @@ class GenerationService:
                 result = download_model(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
                 self._job_results[job.job_id] = {"model_install": result}
         job = self.jobs.submit(runner, operation="model_download"); job_ready.set(); self._watch_terminal(job, on_terminal)
+        return job
+
+    def submit_calibration(self, model_id: str, recipe_name: str, on_progress: Callable[[Job], None], on_terminal: Callable[[Job, dict | None], None]) -> Job:
+        """Measure a quality-approved recipe on this Mac and write a real measured-profile.json.
+
+        Never writes anything on failure or cancellation — an interrupted
+        calibration must not leave a half-written profile that could let a
+        job through with unverified settings.
+        """
+        provider = self._providers.get(model_id)
+        if provider is None:
+            raise GenerationError("selected model is not available")
+        if recipe_name not in provider.facts.calibration_recipes:
+            raise GenerationError("selected recipe has no quality-approved calibration shape")
+        profile_path = self.paths.models / model_id / "measured-profile.json"
+        job_ready = __import__("threading").Event(); job: Job | None = None
+
+        def runner(_progress, cancelled) -> None:
+            job_ready.wait(); assert job is not None
+            # Same measured-memory-ceiling reasoning as generation: only one
+            # diffusion pipeline may be resident while calibration measures
+            # this one's real footprint.
+            for other_id, other_provider in self._providers.items():
+                if other_id != model_id:
+                    other_provider.unload()
+            if self.narrator is not None:
+                self.narrator.unload()
+            existing_raw = None
+            if profile_path.exists():
+                try:
+                    existing_raw = json.loads(profile_path.read_text())
+                except (OSError, ValueError, json.JSONDecodeError):
+                    existing_raw = None
+            new_content = provider.calibrate(
+                recipe_name, existing_raw,
+                lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled,
+            )
+            self._write_json_atomically(profile_path, new_content)
+            self._job_results[job.job_id] = {"calibration": {"model_id": model_id, "recipe": recipe_name}}
+
+        job = self.jobs.submit(runner, operation="calibrate"); job_ready.set(); self._watch_terminal(job, on_terminal)
         return job
 
     def remove_model(self, model_id: str) -> dict:
@@ -565,6 +607,8 @@ class GenerationService:
         spec = REGISTRY[model_id]
         root = self.paths.models / model_id
         installed = root.is_dir() and not root.is_symlink() and (root / "snapshot").is_dir()
+        provider = self._providers.get(model_id)
+        recipes, image = self._measured_profiles(provider) if provider else (None, None)
         return {
             "model_id": model_id,
             "display_name": spec.display_name,
@@ -578,6 +622,7 @@ class GenerationService:
             "modes": sorted(spec.supported_modes),
             "installed": installed,
             "installed_bytes": self._tree_size(root) if installed else 0,
+            "calibration": self._calibration_info(provider, recipes, image),
         }
 
     def _kokoro_status(self) -> dict:
@@ -613,7 +658,6 @@ class GenerationService:
                     "width": profile.width, "height": profile.height,
                     "frames": profile.frames, "fps": profile.fps,
                     "steps": profile.steps, "guidance_scale": profile.guidance_scale,
-                    "test_only": bool(getattr(profile, "test_only", False)),
                 }
                 for name, profile in measured.items()
             }
@@ -634,6 +678,27 @@ class GenerationService:
             except (AttributeError, ValueError, OSError, RuntimeError):
                 pass
         return profiles, image_profile
+
+    @staticmethod
+    def _calibration_info(provider: Provider | None, measured_recipes: dict | None, measured_image_profile: dict | None) -> dict[str, dict] | None:
+        """Per-recipe calibration state for the UI: already measured vs. a static reference shape."""
+        if provider is None or not provider.facts.calibration_recipes:
+            return None
+        measured_names = frozenset(measured_recipes) if measured_recipes else (frozenset({"Balanced"}) if measured_image_profile is not None else frozenset())
+        return {
+            recipe_name: {
+                "measured": recipe_name in measured_names,
+                "reference": provider.calibration_reference(recipe_name),
+            }
+            for recipe_name in sorted(provider.facts.calibration_recipes)
+        }
+
+    @staticmethod
+    def _write_json_atomically(destination: Path, payload: dict) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".partial")
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        temporary.replace(destination)
 
     def export(self, output_id: str, profile: str) -> dict:
         if profile not in {"high", "balanced", "small"}:
