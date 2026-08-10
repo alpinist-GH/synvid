@@ -7,6 +7,7 @@ const convertFileSrc = window.__TAURI__.core.convertFileSrc;
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
+const SETTINGS_HIDDEN_MODEL_IDS = new Set(["flux-dev", "flux-kontext-dev", "hunyuan15-480p-t2v", "hunyuan15-480p-i2v"]);
 const WALKTHROUGH_STEPS = [
   { target: "#prompt", title: "1. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
   { target: "[data-mode=\"text\"]", title: "2. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
@@ -369,7 +370,7 @@ function formatBytes(bytes) {
 }
 function renderModelCatalog(models) {
   const list = $("#model-list"); list.replaceChildren();
-  for (const model of models) {
+  for (const model of models.filter((candidate) => !SETTINGS_HIDDEN_MODEL_IDS.has(candidate.model_id))) {
     const item = document.createElement("article"); item.className = "model-card";
     const title = document.createElement("h4"); title.textContent = model.display_name;
     const reason = document.createElement("p"); reason.textContent = model.reason;

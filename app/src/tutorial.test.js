@@ -49,6 +49,14 @@ test("quality-failed Wan models are retired from generation settings", () => {
   assert.match(source, /Could not remove \$\{model\.display_name\}/);
 });
 
+test("personal research models are hidden from Settings and generation controls", () => {
+  for (const modelId of ["flux-dev", "flux-kontext-dev", "hunyuan15-480p-t2v", "hunyuan15-480p-i2v"]) {
+    assert.match(source, new RegExp(`"${modelId}"`));
+    assert.doesNotMatch(markup, new RegExp(`value="${modelId}"`));
+  }
+  assert.match(source, /models\.filter\(\(candidate\) => !SETTINGS_HIDDEN_MODEL_IDS\.has\(candidate\.model_id\)\)/);
+});
+
 test("model downloads expose byte progress and diagnostics preview", async () => {
   assert.match(markup, /id="model-download-progress"/);
   assert.doesNotMatch(markup, /Developer tools/);
