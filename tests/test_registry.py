@@ -42,3 +42,10 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(t2v.profile, i2v.profile, "territory-restricted models must not enter the shareable profile")
         self.assertIn("territory-restricted", t2v.license_name)
         self.assertTrue(t2v.requires_access_confirmation and i2v.requires_access_confirmation)
+
+    def test_hunyuan15_allowlist_includes_the_mllm_chat_template(self):
+        # Regression test: the allowlist previously omitted tokenizer/*.jinja,
+        # so the required Qwen2.5-VL chat_template.jinja was never downloaded
+        # and every generation failed in encode_prompt.
+        for model_id in ("hunyuan15-480p-t2v", "hunyuan15-480p-i2v"):
+            self.assertIn("tokenizer/*.jinja", REGISTRY[model_id].allowed_files)
