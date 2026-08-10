@@ -330,13 +330,11 @@ async function showLibrary(message = "") {
       const select = document.createElement("button"); select.type = "button"; select.className = "variant"; select.textContent = `${output.output_id} · ${output.prompt || "Untitled"}`;
       select.addEventListener("click", () => { promoteVariant({ outputId: output.output_id, seed: output.seed ?? "unknown", mediaFile: output.media_file }); dialog.close(); });
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete";
-      const forceRemove = document.createElement("button"); forceRemove.type = "button"; forceRemove.className = "danger"; forceRemove.textContent = "Force delete";
-      const deleteOutput = async (cascade) => {
-        const message = cascade ? "Force delete this generation and every generated descendant? Their media and local Library records will be permanently removed." : "Delete this completed generation from SynVid? Its media and local Library record will be permanently removed.";
-        if (!(await appConfirm(message))) return;
-        remove.disabled = true; forceRemove.disabled = true;
+      const deleteOutput = async () => {
+        if (!(await appConfirm("Delete this completed generation from SynVid? Its media and local Library record will be permanently removed."))) return;
+        remove.disabled = true;
         try {
-          const result = await invoke("delete_output", { request: { outputId: output.output_id, cascade } });
+          const result = await invoke("delete_output", { request: { outputId: output.output_id, cascade: false } });
           const deletedIds = new Set(result.deleted_output_ids ?? result.deletedOutputIds ?? [output.output_id]);
           state.variants = state.variants.filter((variant) => !deletedIds.has(variant.outputId));
           if (deletedIds.has(state.selectedVariant)) { state.selectedVariant = null; $("#media-preview").hidden = true; $("#export-controls").hidden = true; $("#image-edit-controls").hidden = true; $("#result-message").textContent = "The selected generation was deleted."; }
@@ -345,11 +343,10 @@ async function showLibrary(message = "") {
           const success = `Deleted ${count} local generation${count === 1 ? "" : "s"} and freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.`;
           $("#result-message").textContent = success;
           await showLibrary(success);
-        } catch (reason) { status.textContent = `Could not delete this generation: ${String(reason)}.`; remove.disabled = false; forceRemove.disabled = false; }
+        } catch (reason) { status.textContent = `Could not delete this generation: ${String(reason)}.`; remove.disabled = false; }
       };
-      remove.addEventListener("click", () => { void deleteOutput(false); });
-      forceRemove.addEventListener("click", () => { void deleteOutput(true); });
-      item.append(select, remove, forceRemove); list.append(item);
+      remove.addEventListener("click", () => { void deleteOutput(); });
+      item.append(select, remove); list.append(item);
     }
     if (!outputs.length) list.textContent = "No completed local outputs yet.";
   } catch (reason) { list.textContent = "The local library is unavailable while the worker is disconnected."; status.textContent = `Could not refresh the Library: ${String(reason)}.`; }
