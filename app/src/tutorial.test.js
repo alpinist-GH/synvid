@@ -25,9 +25,27 @@ test("the frontend has no Keychain or Hugging Face token dependency", () => {
 test("missing required video setup opens an explicit download dialog", () => {
   assert.match(markup, /id="required-model-dialog"/);
   assert.match(markup, /id="download-required-model"/);
+  assert.match(markup, /id="generate-required-profile"/);
   assert.match(source, /maybeShowRequiredModelSetup/);
   assert.match(source, /model_id === "ltx-video"/);
   assert.match(markup, /Download and validate/);
+});
+
+test("an unavailable profile offers generation with live progress", () => {
+  assert.match(markup, /id="generate-profile"/);
+  assert.match(markup, /id="profile-generation-progress"/);
+  assert.match(source, /canGenerateProfile/);
+  assert.match(source, /invoke\("calibrate_model"/);
+  assert.match(source, /profileGenerationProgress/);
+});
+
+test("video controls follow each model's measured recipe shapes", () => {
+  assert.match(source, /function aspectForReference/);
+  assert.match(source, /function availableAspectsFor/);
+  assert.match(source, /function availableQualitiesFor/);
+  assert.match(source, /durationOptionsFor\(model, quality, aspect/);
+  assert.match(source, /button\.disabled = !enabled/);
+  assert.match(source, /options\.length === 1/);
 });
 
 test("library deletion reports its result inside the open dialog", () => {

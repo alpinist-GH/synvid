@@ -113,14 +113,13 @@ here.
   binaries that may need `collect_all('mlx')`-equivalent treatment the way
   `imageio`/`kokoro_onnx` already get in that spec; this has not been
   checked. Stage 8 (release candidate) work, not done in this pass.
-- **UI duration/aspect controls are LTX-shaped.** The Create screen's
-  Draft/High quality buttons and duration slider assume LTX's duration-ladder
-  calibration-recipe naming convention. This model has exactly one recipe
-  ("Balanced", matching the default control state, so the default path works
-  correctly end-to-end); selecting Draft/High or a non-default duration for
-  this model fails cleanly server-side (`GenerationError`, not a crash) but
-  the UI does not yet disable those controls for a single-recipe model — a
-  real but non-broken rough edge.
+- **Wan's measured controls are intentionally narrower than LTX's.** The
+  Create screen now derives available quality, aspect, and duration controls
+  from each model's calibration references. Wan exposes only its measured
+  Balanced Landscape recipe (1280×704, 41 frames at 24 FPS); Draft/High,
+  Square/Portrait, and alternate durations remain disabled rather than being
+  submitted as unmeasured settings. A broader Wan control set requires new
+  real output, memory, cancellation, and quality measurements for each shape.
 - **Only T2V, only this one recipe.** I2V, LoRA, Wan2.1, and the 14B
   dual-model pipelines are not vendored or wired in (see
   `worker/vendor/mlx_video_wan2/NOTICE.md`).

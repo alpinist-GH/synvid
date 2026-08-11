@@ -154,7 +154,9 @@
         <div class="action-area">
           <p id="job-status" role="status" aria-live="polite">Ready when the measured profile is available.</p>
           <progress id="generation-progress" class="generation-progress" max="100" value="0" hidden aria-label="Generation progress"></progress>
+          <progress id="profile-generation-progress" class="generation-progress" max="100" value="0" hidden aria-label="Profile generation progress"></progress>
           <button id="generate" class="generate" type="button" disabled>Generate video</button>
+          <button id="generate-profile" class="generate" type="button" hidden>Generate profile</button>
           <button id="setup-model" class="secondary" type="button" hidden>Set up a local model…</button>
           <button id="cancel" class="secondary" type="button" hidden>Cancel generation</button>
         </div>
@@ -172,7 +174,7 @@
       <p id="required-model-copy">Checking the required local video model…</p>
       <p id="required-model-facts" class="field-help"></p>
       <p class="field-help">The download starts only if you choose Download and validate. SynVid verifies the files, then checks a real local render before enabling generation.</p>
-      <div class="dialog-actions"><button id="download-required-model" class="generate" type="button">Download and validate</button><button id="required-model-not-now" class="secondary" type="button">Not now</button></div>
+      <div class="dialog-actions"><button id="download-required-model" class="generate" type="button">Download and validate</button><button id="generate-required-profile" class="generate" type="button" hidden>Generate profile</button><button id="required-model-not-now" class="secondary" type="button">Not now</button></div>
     </dialog>
     <dialog id="recovery-dialog" aria-labelledby="recovery-title">
       <h2 id="recovery-title">Recovery Center</h2>

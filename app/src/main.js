@@ -32,8 +32,10 @@ const jobStatus = $("#job-status");
 const generateButton = $("#generate");
 const cancelButton = $("#cancel");
 const setupModelButton = $("#setup-model");
+const generateProfileButton = $("#generate-profile");
 const error = $("#form-error");
 const generationProgress = $("#generation-progress");
+const profileGenerationProgress = $("#profile-generation-progress");
 const modelDownloadProgress = $("#model-download-progress");
 const modelDownloadStatus = $("#model-download-status");
 const modelCalibrationProgress = $("#model-calibration-progress");
@@ -130,13 +132,17 @@ function renderModelDownloadProgress(job) {
 function renderCalibrationProgress(job) {
   const calibrating = job?.operation === "calibrate" || (job && state.calibrationJobId === (job.job_id || job.jobId));
   modelCalibrationStatus.hidden = !calibrating;
+  profileGenerationProgress.hidden = !calibrating;
   if (!calibrating) {
     modelCalibrationProgress.value = 0;
+    profileGenerationProgress.value = 0;
     return;
   }
   const percent = Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
   modelCalibrationProgress.value = percent;
+  profileGenerationProgress.value = percent;
   modelCalibrationProgress.setAttribute("aria-valuetext", `${percent}%`);
+  profileGenerationProgress.setAttribute("aria-valuetext", `${percent}%`);
   $("#model-calibration-status-text").textContent = `${job.status_text || job.statusText || "Calibrating model"} · ${percent}%`;
 }
 function selectedModel() { return state.models?.[state.modelId] || null; }
@@ -146,21 +152,58 @@ const QUALITY_TIERS = ["Draft", "Balanced", "High"];
 const ASPECT_RATIOS = ["Square", "Landscape", "Portrait"];
 // Square recipes form a duration ladder per quality tier ("Balanced",
 // "BalancedD17", "BalancedD25", …); Landscape/Portrait stay single-duration.
-function durationOptionsFor(model, quality) {
+function aspectForReference(reference) {
+  if (!reference?.width || !reference?.height) return null;
+  const ratio = reference.width / reference.height;
+  return ratio > 1.2 ? "Landscape" : ratio < 0.833 ? "Portrait" : "Square";
+}
+function recipeAspect(name, quality, info) {
+  const suffix = name.slice(quality.length);
+  if (suffix === "Landscape") return "Landscape";
+  if (suffix === "Portrait") return "Portrait";
+  if (suffix === "" || /^D\d+$/.test(suffix)) return aspectForReference(info.reference);
+  return null;
+}
+function durationOptionsFor(model, quality, aspect = state.aspect) {
   if (!model?.calibration) return [];
-  const pattern = new RegExp(`^${quality}(D(\\d+))?$`);
+  const pattern = new RegExp(`^${quality}(D(\\d+)|Landscape|Portrait)?$`);
   return Object.entries(model.calibration)
-    .filter(([name]) => pattern.test(name))
+    .filter(([name, info]) => pattern.test(name) && recipeAspect(name, quality, info) === aspect)
     .map(([name, info]) => ({ name, frames: info.reference?.frames || 0, fps: info.reference?.fps || 8, measured: Boolean(info.measured) }))
     .filter((option) => option.frames > 0)
     .sort((a, b) => a.frames - b.frames);
 }
+function availableAspectsFor(model, quality = state.quality) {
+  if (!model?.calibration) return ASPECT_RATIOS;
+  return ASPECT_RATIOS.filter((aspect) => durationOptionsFor(model, quality, aspect).length > 0);
+}
+function availableQualitiesFor(model, aspect = state.aspect) {
+  if (!model?.calibration) return QUALITY_TIERS;
+  return QUALITY_TIERS.filter((quality) => durationOptionsFor(model, quality, aspect).length > 0);
+}
 function composeRecipeName(quality, aspect, frames) {
-  if (aspect !== "Square") return `${quality}${aspect}`;
-  const options = durationOptionsFor(selectedModel(), quality);
+  const options = durationOptionsFor(selectedModel(), quality, aspect);
   if (!options.length) return quality;
   const match = options.find((option) => option.frames === frames) || options.find((option) => option.name === quality) || options[0];
   return match.name;
+}
+function normalizeSelection() {
+  const model = selectedModel();
+  let aspects = availableAspectsFor(model, state.quality);
+  if (model?.calibration && !aspects.length) {
+    aspects = ASPECT_RATIOS.filter((aspect) => QUALITY_TIERS.some((quality) => durationOptionsFor(model, quality, aspect).length > 0));
+  }
+  if (aspects.length && !aspects.includes(state.aspect)) state.aspect = aspects[0];
+  let qualities = availableQualitiesFor(model, state.aspect);
+  if (model?.calibration && !qualities.length) {
+    qualities = QUALITY_TIERS.filter((quality) => ASPECT_RATIOS.some((aspect) => durationOptionsFor(model, quality, aspect).length > 0));
+  }
+  if (qualities.length && !qualities.includes(state.quality)) state.quality = qualities.includes("Balanced") ? "Balanced" : qualities[0];
+  const options = durationOptionsFor(model, state.quality, state.aspect);
+  if (options.length && !options.some((option) => option.frames === state.frames)) {
+    state.frames = (options.find((option) => option.name === state.quality) || options[0]).frames;
+  }
+  state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
 }
 function draft() { return { prompt: $("#prompt").value, seed: $("#seed").value, recipe: state.quality, aspect: state.aspect, frames: state.frames }; }
 function saveDraft() { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft())); }
@@ -189,24 +232,47 @@ function restoreDraft() {
 }
 function setRecipe(quality) {
   state.quality = quality;
+  normalizeSelection();
   state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
   for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === quality));
+  renderRecipeButtons();
   renderRecipeNote();
   renderDurationControl();
 }
 function setAspect(aspect) {
   state.aspect = aspect;
+  normalizeSelection();
   state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
   for (const button of document.querySelectorAll("[data-aspect]")) button.setAttribute("aria-checked", String(button.dataset.aspect === aspect));
+  renderAspectButtons();
   renderRecipeNote();
   renderDurationControl();
 }
 function setDuration(frames) {
-  if (state.aspect !== "Square") return;
+  if (!durationOptionsFor(selectedModel(), state.quality, state.aspect).some((option) => option.frames === frames)) return;
   state.frames = frames;
   state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
   renderRecipeNote();
   renderDurationControl();
+}
+function renderRecipeButtons() {
+  const model = selectedModel();
+  const available = availableQualitiesFor(model, state.aspect);
+  for (const button of document.querySelectorAll("[data-recipe]")) {
+    const enabled = available.includes(button.dataset.recipe);
+    button.disabled = !enabled;
+    button.setAttribute("aria-disabled", String(!enabled));
+    button.setAttribute("aria-checked", String(button.dataset.recipe === state.quality));
+  }
+}
+function renderAspectButtons() {
+  const available = availableAspectsFor(selectedModel(), state.quality);
+  for (const button of document.querySelectorAll("[data-aspect]")) {
+    const enabled = available.includes(button.dataset.aspect);
+    button.disabled = !enabled;
+    button.setAttribute("aria-disabled", String(!enabled));
+    button.setAttribute("aria-checked", String(button.dataset.aspect === state.aspect));
+  }
 }
 function renderRecipeNote() {
   const profile = activeProfile();
@@ -219,17 +285,20 @@ function renderDurationControl() {
   const field = $("#duration-field"); const slider = $("#duration-slider"); const valueOut = $("#duration-value"); const note = $("#duration-note");
   if (isImageModel()) { field.hidden = true; return; }
   field.hidden = false;
-  if (state.aspect !== "Square") {
-    slider.disabled = true; slider.min = "0"; slider.max = "0"; slider.value = "0";
-    valueOut.textContent = "Fixed";
-    note.textContent = `${state.aspect} videos use one fixed measured duration on this Mac. Switch to Square for adjustable duration.`;
-    return;
-  }
-  const options = durationOptionsFor(selectedModel(), state.quality);
+  const options = durationOptionsFor(selectedModel(), state.quality, state.aspect);
   if (!options.length) {
     slider.disabled = true; slider.min = "0"; slider.max = "0"; slider.value = "0";
     valueOut.textContent = "—";
     note.textContent = "Duration options appear once the model catalog loads.";
+    return;
+  }
+  if (options.length === 1) {
+    const option = options[0];
+    slider.disabled = true; slider.min = "0"; slider.max = "0"; slider.value = "0";
+    valueOut.textContent = `${(option.frames / option.fps).toFixed(1)}s`;
+    note.textContent = option.measured
+      ? `${option.frames} frames at ${option.fps} fps, measured on this Mac; this model has one validated duration for ${state.aspect}.`
+      : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Generate a profile before generating.`;
     return;
   }
   let index = options.findIndex((option) => option.frames === state.frames);
@@ -240,25 +309,33 @@ function renderDurationControl() {
   valueOut.textContent = `${(option.frames / option.fps).toFixed(1)}s`;
   note.textContent = option.measured
     ? `${option.frames} frames at ${option.fps} fps, measured on this Mac.`
-    : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Open Settings to calibrate it before generating.`;
+    : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Generate a profile before generating.`;
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
 function hasUncalibratedRecipe(model) { return Object.values(model?.calibration || {}).some((info) => !info.measured); }
 function updateControls() {
+  normalizeSelection();
   const model = selectedModel(); const profile = activeProfile();
   const installed = Boolean(model?.installed);
+  const calibration = model?.calibration?.[state.recipe];
+  const canGenerateProfile = state.connected && installed && !profile && Boolean(calibration?.reference) && !state.activeJob;
   const available = state.connected && profile && installed && !state.activeJob;
   generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
-  setupModelButton.hidden = !state.connected || (installed && Boolean(profile)) || Boolean(state.activeJob);
+  cancelButton.textContent = state.activeJob?.operation === "calibrate" ? "Cancel profile generation" : "Cancel generation";
+  generateProfileButton.hidden = !canGenerateProfile;
+  setupModelButton.hidden = !state.connected || Boolean(state.activeJob) || (installed && (Boolean(profile) || Boolean(calibration?.reference)));
   if (!state.activeJob) {
     if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
     else if (!installed) jobStatus.textContent = "Install the selected local model before generating.";
     else if (!profile) jobStatus.textContent = hasUncalibratedRecipe(model)
-      ? "This model needs on-device calibration before it can generate. Open Settings to calibrate it."
+      ? "This model has no measured profile for the selected recipe. Generate one on this Mac before generating."
       : (selectedModel()?.reason || "Set up a measured local model before generating. SynVid will show its size, license, and revision first.");
     else jobStatus.textContent = "Ready to generate locally.";
   }
   renderGenerationProgress(state.activeJob);
+  renderCalibrationProgress(state.activeJob);
+  renderRecipeButtons();
+  renderAspectButtons();
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
   $("#fps").textContent = profile && !isImageModel() ? `${profile.fps} FPS (Native)` : "—";
   generateButton.textContent = isImageModel() ? "Generate image" : "Generate video";
@@ -364,10 +441,12 @@ async function maybeShowRequiredModelSetup() {
     requiredModel = (response.models || []).find((model) => model.model_id === "ltx-video") || null;
     if (!requiredModel) return;
     $("#required-model-copy").textContent = requiredModel.installed
-      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Open Settings and calibrate it before generating."
+      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Generate one on this Mac before generating."
       : "LTX Video is required before SynVid can create video on this Mac.";
     $("#required-model-facts").textContent = "Model: " + requiredModel.display_name + " · " + requiredModel.expected_size_gib + " GB expected · " + requiredModel.license + " · revision " + requiredModel.revision;
     $("#download-required-model").hidden = Boolean(requiredModel.installed);
+    const calibration = requiredModel.calibration?.[state.recipe] || requiredModel.calibration?.Balanced;
+    $("#generate-required-profile").hidden = !requiredModel.installed || !calibration?.reference;
     if (!$("#required-model-dialog").open) $("#required-model-dialog").showModal();
   } catch {
     requiredModelSetupChecked = false;
@@ -500,7 +579,7 @@ function renderModelCatalog(models) {
 async function runCalibration(model, recipeName, reference, button) {
   const frames = reference.frames ? `${reference.frames} frames at ${reference.fps} fps, ` : "";
   const minGiB = Math.ceil((reference.min_system_memory_bytes || 0) / 1024 ** 3);
-  const message = `Calibrate ${model.display_name} (${recipeName})?\n\n`
+  const message = `Generate a profile for ${model.display_name} (${recipeName})?\n\n`
     + `This runs a real ${reference.width} × ${reference.height}, ${frames}${reference.steps}-step generation on this Mac to measure `
     + `its own memory use and speed. It can take many minutes, and SynVid will be unusable for anything else while it runs.\n\n`
     + `This Mac needs at least ${minGiB} GB of memory for this recipe. These numbers were measured on the developer's own Mac; `
@@ -512,7 +591,7 @@ async function runCalibration(model, recipeName, reference, button) {
     const accepted = await invoke("calibrate_model", { modelId: model.model_id, recipe: recipeName });
     state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "calibrate", status_text: `Calibrating ${model.display_name}`, progress: 0 };
     state.calibrationJobId = state.activeJob.job_id;
-    jobStatus.textContent = `Calibrating ${model.display_name}…`;
+    jobStatus.textContent = `Generating a profile for ${model.display_name}…`;
     updateControls();
   } catch (reason) { setError(String(reason)); button.disabled = false; }
 }
@@ -562,6 +641,12 @@ restoreDraft();
 if (!localStorage.getItem(ONBOARDING_KEY)) $("#onboarding").showModal();
 $("#complete-onboarding").addEventListener("click", () => { localStorage.setItem(ONBOARDING_KEY, "complete"); void maybeShowRequiredModelSetup(); });
 $("#download-required-model").addEventListener("click", () => void downloadRequiredModel());
+$("#generate-required-profile").addEventListener("click", () => {
+  const calibration = requiredModel?.calibration?.[state.recipe] || requiredModel?.calibration?.Balanced;
+  if (!requiredModel || !calibration?.reference) return setError("The selected model has no available profile recipe.");
+  $("#required-model-dialog").close();
+  void runCalibration(requiredModel, state.recipe in (requiredModel.calibration || {}) ? state.recipe : "Balanced", calibration.reference, $("#generate-required-profile"));
+});
 $("#required-model-not-now").addEventListener("click", () => $("#required-model-dialog").close());
 $("#start-walkthrough").addEventListener("click", startWalkthrough);
 for (const button of document.querySelectorAll("[data-workspace-tab]")) button.addEventListener("click", () => setWorkspaceTab(button.dataset.workspaceTab));
@@ -572,8 +657,8 @@ window.addEventListener("resize", repositionWalkthrough);
 window.addEventListener("scroll", repositionWalkthrough, true);
 $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener("change", saveHistory);
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
-for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });
-for (const button of document.querySelectorAll("[data-aspect]")) button.addEventListener("click", () => { setAspect(button.dataset.aspect); saveHistory(); });
+for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { if (button.disabled) return; setRecipe(button.dataset.recipe); saveHistory(); });
+for (const button of document.querySelectorAll("[data-aspect]")) button.addEventListener("click", () => { if (button.disabled) return; setAspect(button.dataset.aspect); saveHistory(); });
 $("#duration-slider").addEventListener("input", () => {
   const options = durationOptionsFor(selectedModel(), state.quality);
   const option = options[Number($("#duration-slider").value)];
@@ -591,6 +676,11 @@ $("#choose-image").addEventListener("click", async () => {
   catch (reason) { setError(String(reason)); }
 });
 $("#model").addEventListener("change", () => { state.modelId = $("#model").value; state.frames = 49; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
+generateProfileButton.addEventListener("click", () => {
+  const model = selectedModel(); const calibration = model?.calibration?.[state.recipe];
+  if (!model || !calibration?.reference) return setError("The selected model has no available profile recipe.");
+  void runCalibration(model, state.recipe, calibration.reference, generateProfileButton);
+});
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;
