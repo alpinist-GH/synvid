@@ -523,6 +523,13 @@ class GenerationService:
                 lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled,
             )
             self._write_json_atomically(profile_path, new_content)
+            measured = new_content.get("recipes", {}).get(recipe_name) if isinstance(new_content, dict) else None
+            disk_bytes = measured.get("estimated_disk_bytes") if isinstance(measured, dict) else None
+            if isinstance(disk_bytes, int) and disk_bytes > 0:
+                # Calibration can be the first measured profile in a fresh
+                # worker. Refresh admission immediately instead of requiring
+                # an app restart before the newly measured model can run.
+                self._estimates[model_id] = Estimate(disk_bytes, True)
             self._job_results[job.job_id] = {"calibration": {"model_id": model_id, "recipe": recipe_name}}
 
         job = self.jobs.submit(runner, operation="calibrate"); job_ready.set(); self._watch_terminal(job, on_terminal)
@@ -702,6 +709,7 @@ class GenerationService:
                     "width": profile.width, "height": profile.height,
                     "frames": profile.frames, "fps": profile.fps,
                     "steps": profile.steps, "guidance_scale": profile.guidance_scale,
+                    "mode": profile.mode,
                 }
                 for name, profile in measured.items()
             }

@@ -108,19 +108,18 @@ here.
 
 ## Known gaps, stated plainly
 
-- **PyInstaller packaging is unverified.** `build/pyinstaller/synvid-worker.spec`
-  was not updated or tested against a frozen `.app` build. MLX ships Metal
-  binaries that may need `collect_all('mlx')`-equivalent treatment the way
-  `imageio`/`kokoro_onnx` already get in that spec; this has not been
-  checked. Stage 8 (release candidate) work, not done in this pass.
+- **PyInstaller packaging was initially unverified.** This was closed by the
+  2026-08-11 update below; the frozen app now includes the MLX collection
+  directives and has passed a real packaged Wan generation.
 - **Wan's measured controls are intentionally narrower than LTX's.** The
-  Create screen now derives available quality, aspect, and duration controls
-  from each model's calibration references. Wan exposes only its measured
-  Balanced Landscape recipe (1280×704, 41 frames at 24 FPS); Draft/High,
-  Square/Portrait, and alternate durations remain disabled rather than being
-  submitted as unmeasured settings. A broader Wan control set requires new
-  real output, memory, cancellation, and quality measurements for each shape.
-- **Only T2V, only this one recipe.** I2V, LoRA, Wan2.1, and the 14B
+  Create screen now derives available quality, aspect, duration, and mode
+  controls from each model's calibration references. The provider now offers
+  explicit calibration candidates for Draft/High, shorter/longer Landscape
+  durations, Square, Portrait, and TI2V Image-to-Video. Only the existing
+  Balanced Landscape text-to-video entry is measured; every new candidate is
+  disabled for generation until its own real output, memory, cancellation,
+  and visual-quality checks are recorded.
+- **Only the single-model TI2V path is wired.** LoRA, Wan2.1, and the 14B
   dual-model pipelines are not vendored or wired in (see
   `worker/vendor/mlx_video_wan2/NOTICE.md`).
 - **Dependency footprint changed.** `mlx==0.31.1` is now a real
@@ -148,6 +147,7 @@ been opaque to diagnose without rebuilding from source.
 User-verified end-to-end against the real packaged, notarizable `.app`: a
 Wan 2.2 TI2V-5B (MLX) generation completed successfully. This confirms the
 runtime packages and runs correctly outside a source checkout; it does
-**not** change anything else in this document — the recipe is still one
-shape only (Balanced Landscape), and quality is still provisional, not the
-full multi-prompt gate other ✅ models passed.
+**not** change anything else in this document — only the original Balanced
+Landscape T2V recipe is measured, and quality is still provisional, not the
+full multi-prompt gate other ✅ models passed. The additional candidates wired
+on 2026-08-11 still require local calibration and direct inspection.

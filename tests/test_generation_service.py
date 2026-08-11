@@ -533,6 +533,7 @@ class CalibrationServiceTests(unittest.TestCase):
             profile_path = service.paths.models / "fake-calibratable" / "measured-profile.json"
             content = json.loads(profile_path.read_text())
             self.assertEqual(content["recipes"]["Balanced"]["width"], 64)
+            self.assertEqual(service._estimates["fake-calibratable"], Estimate(1, True))
 
     def test_merges_a_second_recipe_without_clobbering_the_first(self):
         with tempfile.TemporaryDirectory() as temp:

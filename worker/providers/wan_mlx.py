@@ -30,14 +30,43 @@ class WanMlxProviderError(RuntimeError):
     pass
 
 
-# The only quality-approved recipe shape (docs/measurements/wan2.2-ti2v-5b-mlx-gate-2026-08-10.md):
-# a single real generation on this Mac, directly inspected and found watchable.
-# Not yet run through the multi-prompt quality gate that failed the Diffusers
-# Wan2.2 TI2V-5B attempt — treat as provisionally, not fully, approved.
+# Balanced text-to-video is the only recipe measured so far. The additional
+# entries below are explicit calibration candidates: they are visible in
+# Preparation, but the UI and worker refuse generation until each one has a
+# real measured-profile entry. This keeps adding an option separate from
+# claiming that the option is already quality-approved.
 CALIBRATION_RECIPES: dict[str, dict[str, object]] = {
     "Balanced": {
         "width": 1280, "height": 704, "frames": 41, "fps": 24,
-        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16",
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "DraftLandscape": {
+        "width": 1280, "height": 704, "frames": 41, "fps": 24,
+        "steps": 20, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "HighLandscape": {
+        "width": 1280, "height": 704, "frames": 41, "fps": 24,
+        "steps": 60, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "BalancedLandscapeD25": {
+        "width": 1280, "height": 704, "frames": 25, "fps": 24,
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "BalancedLandscapeD49": {
+        "width": 1280, "height": 704, "frames": 49, "fps": 24,
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "BalancedSquare": {
+        "width": 704, "height": 704, "frames": 41, "fps": 24,
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "BalancedPortrait": {
+        "width": 704, "height": 1280, "frames": 41, "fps": 24,
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "text",
+    },
+    "BalancedI2V": {
+        "width": 1280, "height": 704, "frames": 41, "fps": 24,
+        "steps": 40, "guidance_scale": 5.0, "dtype": "bfloat16", "mode": "image",
     },
 }
 
@@ -68,6 +97,7 @@ class WanMlxMeasuredProfile:
     peak_rss_bytes: int
     peak_mlx_bytes: int
     wall_time_seconds: float
+    mode: str = "text"
 
     @classmethod
     def from_json(cls, path: Path) -> "WanMlxMeasuredProfile":
@@ -91,8 +121,8 @@ class WanMlxMeasuredRecipes:
                 for name, value in raw.get("recipes", {}).items()
                 if name in CALIBRATION_RECIPES and isinstance(value, dict)
             }
-            if not recipes or "Balanced" not in recipes:
-                raise ValueError("measured recipes must include Balanced")
+            if not recipes:
+                raise ValueError("measured recipes must include at least one recipe")
             return cls(recipes)
         except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
             raise WanMlxProviderError("missing or invalid measured Wan MLX recipes") from error
@@ -130,6 +160,9 @@ class WanMlxProvider:
         expected = (profile.width, profile.height, profile.frames, profile.fps, profile.steps, profile.guidance_scale)
         if actual != expected:
             raise WanMlxProviderError("generation settings are not in the measured Wan MLX profile")
+        requested_mode = "image" if request.source_image is not None else "text"
+        if profile.mode != requested_mode:
+            raise WanMlxProviderError("generation mode is not in the measured Wan MLX profile")
         if cancelled():
             raise InterruptedError("generation cancelled before model load")
         self._verify()
@@ -137,7 +170,8 @@ class WanMlxProvider:
         self._generate(
             prompt=request.prompt, width=request.width, height=request.height,
             num_frames=request.frames, steps=request.steps, guide_scale=request.guidance_scale,
-            seed=request.seed, output_path=video_path, progress=progress, cancelled=cancelled,
+            seed=request.seed, output_path=video_path, image=request.source_image,
+            progress=progress, cancelled=cancelled,
         )
         if cancelled():
             raise InterruptedError("generation cancelled")
@@ -168,10 +202,20 @@ class WanMlxProvider:
         mx.reset_peak_memory()
         start = time.monotonic()
         with tempfile.TemporaryDirectory() as scratch:
+            image = None
+            if shape["mode"] == "image":
+                from PIL import Image, ImageDraw
+
+                image = Path(scratch) / "calibration-source.png"
+                canvas = Image.new("RGB", (shape["width"], shape["height"]), (24, 52, 82))
+                draw = ImageDraw.Draw(canvas)
+                draw.ellipse((shape["width"] // 3, shape["height"] // 4, shape["width"] * 2 // 3, shape["height"] * 3 // 4), fill=(230, 174, 62))
+                canvas.save(image)
             self._generate(
                 prompt=_CALIBRATION_PROMPT, width=shape["width"], height=shape["height"],
                 num_frames=shape["frames"], steps=shape["steps"], guide_scale=shape["guidance_scale"],
-                seed=42, output_path=Path(scratch) / "calibration.mp4", progress=progress, cancelled=cancelled,
+                seed=42, output_path=Path(scratch) / "calibration.mp4", image=image,
+                progress=progress, cancelled=cancelled,
             )
         wall_time = time.monotonic() - start
         if cancelled():
@@ -185,6 +229,7 @@ class WanMlxProvider:
             "peak_rss_bytes": peak_rss_bytes(),
             "peak_mlx_bytes": mx.get_peak_memory(),
             "wall_time_seconds": wall_time,
+            "mode": shape["mode"],
         }
         recipes = dict(existing_profile_raw.get("recipes", {})) if isinstance(existing_profile_raw, dict) else {}
         recipes[recipe_name] = measured
@@ -202,7 +247,8 @@ class WanMlxProvider:
 
     def _generate(
         self, *, prompt: str, width: int, height: int, num_frames: int, steps: int,
-        guide_scale: float, seed: int, output_path: Path, progress: ProgressCallback,
+        guide_scale: float, seed: int, output_path: Path, image: Path | None,
+        progress: ProgressCallback,
         cancelled: Callable[[], bool],
     ) -> None:
         try:
@@ -228,6 +274,7 @@ class WanMlxProvider:
             generate_module.generate_video(
                 model_dir=str(self._model_root),
                 prompt=prompt,
+                image=str(image) if image is not None else None,
                 width=width, height=height, num_frames=num_frames,
                 steps=steps, guide_scale=guide_scale, seed=seed,
                 output_path=str(output_path),

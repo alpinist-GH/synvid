@@ -146,7 +146,7 @@
           <section id="model-settings" aria-labelledby="model-settings-title">
             <div id="wan-settings" class="wan-settings" hidden>
               <h3 id="model-settings-title">Wan 2.2 settings</h3>
-              <p class="field-help">Wan 2.2 currently exposes one measured text-to-video shape. The values below are fixed to the provider's accepted profile.</p>
+              <p class="field-help">Wan 2.2 exposes only locally measured recipes. The model-aware controls below show the active profile; new recipes must be generated and measured in Preparation first.</p>
               <dl class="facts wan-settings-list">
                 <div><dt>Mode</dt><dd>Text to video</dd></div>
                 <div><dt>Resolution</dt><dd>1280 × 704</dd></div>
@@ -158,7 +158,7 @@
                 <div><dt>Scheduler</dt><dd>UniPC</dd></div>
                 <div><dt>VAE tiling</dt><dd>Automatic</dd></div>
               </dl>
-              <p class="field-help">No alternate recipe, aspect ratio, duration, image-to-video mode, LoRA, or interpolation option is wired for this model.</p>
+              <p class="field-help">Alternate quality, aspect, duration, and image-to-video profiles remain unavailable until their own calibration and visual checks pass.</p>
             </div>
             <div id="generic-generation-controls">
               <fieldset>
@@ -208,7 +208,7 @@
     <dialog id="onboarding" aria-labelledby="onboarding-title">
       <h2 id="onboarding-title">Before you create</h2>
       <p>SynVid runs generation locally. Models are stored in Application Support, can require substantial disk space and are never downloaded without an explicit confirmation.</p>
-      <p>The default Wan 2.2 profile is constrained to the one combination measured on this Mac. No media has been rendered while this page is open.</p>
+      <p>The default Wan 2.2 profile starts with one measured combination. Additional quality, aspect, duration, and image-to-video choices appear only after their own local calibration. No media has been rendered while this page is open.</p>
       <form method="dialog"><button id="complete-onboarding" class="generate" value="continue" type="submit">Continue to SynVid</button></form>
     </dialog>
     <dialog id="required-model-dialog" aria-labelledby="required-model-title">

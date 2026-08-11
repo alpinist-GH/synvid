@@ -15,7 +15,7 @@ const WALKTHROUGH_STEPS = [
   { target: "#prompt", title: "2. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
   { target: "[data-mode=\"text\"]", title: "3. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
   { target: "#model", title: "4. Pick a model", copy: "Choose the prepared model for the result you need. LTX Video makes video; FLUX.1-schnell makes a still image. Downloads and profile generation stay in Preparation." },
-  { target: "#model-settings", title: "5. Review model settings", copy: "Each model shows only settings that have been measured for it. Wan 2.2 uses one fixed validated shape, while LTX exposes its measured recipe, aspect, and duration choices." },
+  { target: "#model-settings", title: "5. Review model settings", copy: "Each model shows only settings that have been measured for it. Wan 2.2 can expose quality, aspect, duration, and image-to-video choices as each profile passes local calibration." },
   { target: "#seed", title: "6. Control variations", copy: "Keep a seed to make a comparable variation, or use Randomize for a new one. Undo and Redo restore recent prompt, seed, and recipe changes." },
   { target: "#generate", title: "7. Generate locally", copy: "Generate starts the selected measured model. Progress and Cancel stay here while it runs. Model download and profile generation happen separately in Preparation." },
   { target: "#variant-list", title: "8. Review and refine", copy: "Each finished output appears in Variants. Select one to preview it, export it, or use Edit video, Add Voice, or image editing when those tools are available." },
@@ -148,28 +148,43 @@ function renderCalibrationProgress(job) {
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
 function isWanModel() { return state.modelId === WAN_MODEL_ID; }
+function selectedGenerationMode() { return state.mode === "image" && !isImageModel() ? "image" : "text"; }
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
 const QUALITY_TIERS = ["Draft", "Balanced", "High"];
 const ASPECT_RATIOS = ["Square", "Landscape", "Portrait"];
-// Square recipes form a duration ladder per quality tier ("Balanced",
-// "BalancedD17", "BalancedD25", …); Landscape/Portrait stay single-duration.
+// Recipe names carry optional aspect, duration, and mode suffixes. For
+// example: Balanced (legacy landscape T2V), DraftLandscape,
+// BalancedLandscapeD25, BalancedSquare, and BalancedI2V.
+function recipeDescriptor(name, quality) {
+  if (!name.startsWith(quality)) return null;
+  let suffix = name.slice(quality.length);
+  let mode = "text";
+  if (suffix.endsWith("I2V")) { mode = "image"; suffix = suffix.slice(0, -3); }
+  else if (suffix.endsWith("T2V")) { suffix = suffix.slice(0, -3); }
+  let frames = null;
+  const duration = suffix.match(/D(\d+)$/);
+  if (duration) { frames = Number(duration[1]); suffix = suffix.slice(0, -duration[0].length); }
+  const aspect = ASPECT_RATIOS.includes(suffix) ? suffix : null;
+  return { mode, aspect, frames };
+}
 function aspectForReference(reference) {
   if (!reference?.width || !reference?.height) return null;
   const ratio = reference.width / reference.height;
   return ratio > 1.2 ? "Landscape" : ratio < 0.833 ? "Portrait" : "Square";
 }
 function recipeAspect(name, quality, info) {
-  const suffix = name.slice(quality.length);
-  if (suffix === "Landscape") return "Landscape";
-  if (suffix === "Portrait") return "Portrait";
-  if (suffix === "" || /^D\d+$/.test(suffix)) return aspectForReference(info.reference);
-  return null;
+  const descriptor = recipeDescriptor(name, quality);
+  if (!descriptor) return null;
+  return descriptor.aspect || aspectForReference(info.reference);
 }
 function durationOptionsFor(model, quality, aspect = state.aspect) {
   if (!model?.calibration) return [];
-  const pattern = new RegExp(`^${quality}(D(\\d+)|Landscape|Portrait)?$`);
   return Object.entries(model.calibration)
-    .filter(([name, info]) => pattern.test(name) && recipeAspect(name, quality, info) === aspect)
+    .filter(([name, info]) => {
+      const descriptor = recipeDescriptor(name, quality);
+      const mode = info.reference?.mode || descriptor?.mode || "text";
+      return descriptor && mode === selectedGenerationMode() && recipeAspect(name, quality, info) === aspect;
+    })
     .map(([name, info]) => ({ name, frames: info.reference?.frames || 0, fps: info.reference?.fps || 8, measured: Boolean(info.measured) }))
     .filter((option) => option.frames > 0)
     .sort((a, b) => a.frames - b.frames);
@@ -313,9 +328,11 @@ function renderDurationControl() {
     : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Generate a profile before generating.`;
 }
 function renderModelSettings() {
-  const wan = isWanModel();
-  $("#generic-generation-controls").hidden = wan;
-  $("#wan-settings").hidden = !wan;
+  // Wan uses the same model-aware recipe, aspect, duration, and mode
+  // controls as the other providers. Unmeasured candidates remain visible
+  // for preparation but cannot enable Generate.
+  $("#generic-generation-controls").hidden = false;
+  $("#wan-settings").hidden = true;
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
 function hasUncalibratedRecipe(model) { return Object.values(model?.calibration || {}).some((info) => !info.measured); }
@@ -597,7 +614,8 @@ function renderModelCatalog(models) {
 async function runCalibration(model, recipeName, reference, button) {
   const frames = reference.frames ? `${reference.frames} frames at ${reference.fps} fps, ` : "";
   const minGiB = Math.ceil((reference.min_system_memory_bytes || 0) / 1024 ** 3);
-  const message = `Generate a profile for ${model.display_name} (${recipeName})?\n\n`
+  const mode = reference.mode === "image" ? "image-to-video" : "text-to-video";
+  const message = `Generate a ${mode} profile for ${model.display_name} (${recipeName})?\n\n`
     + `This runs a real ${reference.width} × ${reference.height}, ${frames}${reference.steps}-step generation on this Mac to measure `
     + `its own memory use and speed. It can take many minutes, and SynVid will be unusable for anything else while it runs.\n\n`
     + `This Mac needs at least ${minGiB} GB of memory for this recipe. These numbers were measured on the developer's own Mac; `
@@ -703,6 +721,7 @@ for (const button of document.querySelectorAll("[data-mode]")) button.addEventLi
   state.mode = button.dataset.mode;
   for (const item of document.querySelectorAll("[data-mode]")) { const selected = item === button; item.setAttribute("aria-checked", String(selected)); item.classList.toggle("selected", selected); }
   $("#choose-image").hidden = state.mode !== "image"; $("#source-image-status").hidden = state.mode !== "image";
+  normalizeSelection(); updateControls(); saveHistory();
 });
 $("#choose-image").addEventListener("click", async () => {
   try { const selected = await invoke("choose_source_image"); state.sourceImageId = selected.sourceImageId; $("#source-image-status").textContent = state.sourceImageId ? "Source image selected and copied into SynVid storage." : "No source image selected."; }

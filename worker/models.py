@@ -135,7 +135,7 @@ REGISTRY = {
     # ~30 GiB peak system memory); not yet run through the same multi-prompt
     # quality gate that failed the Diffusers path. See
     # docs/measurements/wan2.2-ti2v-5b-mlx-gate-2026-08-10.md.
-    "wan2.2-ti2v-5b-mlx": ModelSpec("wan2.2-ti2v-5b-mlx", "Wan 2.2 TI2V 5B", "5B text-to-video provider via an Apple-native MLX port, with one validated 1280x704 Landscape profile on this Mac. The current provider accepts text prompts only and keeps its measured generation settings fixed.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "Wan-AI/Wan2.2-TI2V-5B", "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", _WAN22_TI2V_5B_MLX_LICENSE, 23.0, True, _WAN_MLX_CONVERTED_FILES, _SYNVID_CONVERTED, frozenset({"text"})),
+    "wan2.2-ti2v-5b-mlx": ModelSpec("wan2.2-ti2v-5b-mlx", "Wan 2.2 TI2V 5B", "5B text-and-image-to-video provider via an Apple-native MLX port. Balanced Landscape text-to-video is measured; alternate quality, duration, aspect, and image-to-video profiles must be measured locally before use.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "Wan-AI/Wan2.2-TI2V-5B", "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", _WAN22_TI2V_5B_MLX_LICENSE, 23.0, True, _WAN_MLX_CONVERTED_FILES, _SYNVID_CONVERTED, frozenset({"text", "image"})),
 }
 
 

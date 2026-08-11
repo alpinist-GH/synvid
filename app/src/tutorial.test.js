@@ -55,10 +55,12 @@ test("video controls follow each model's measured recipe shapes", () => {
   assert.match(source, /options\.length === 1/);
 });
 
-test("Wan 2.2 is the default and uses its fixed measured settings surface", () => {
+test("Wan 2.2 is the default and uses model-aware measured settings", () => {
   assert.match(markup, /<option value="wan2\.2-ti2v-5b-mlx">Wan 2\.2 TI2V 5B<\/option>/);
   assert.match(source, /DEFAULT_MODEL_ID = "wan2\.2-ti2v-5b-mlx"/);
   assert.match(source, /modelId: DEFAULT_MODEL_ID/);
+  assert.match(source, /function recipeDescriptor/);
+  assert.match(source, /selectedGenerationMode/);
   assert.doesNotMatch(markup, /Wan 2\.2[^<]*experimental/i);
   assert.match(markup, /id="wan-settings"/);
   assert.match(markup, /1280 × 704/);

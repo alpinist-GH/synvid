@@ -137,8 +137,10 @@ def _measured_estimate(profile: Path) -> Estimate:
         import json
         measured = json.loads(profile.read_text())
         recipes = measured.get("recipes", {"Balanced": measured})
-        balanced = recipes.get("Balanced", {}) if isinstance(recipes, dict) else {}
-        disk_bytes = balanced.get("estimated_disk_bytes") if isinstance(balanced, dict) else None
+        selected = recipes.get("Balanced") if isinstance(recipes, dict) else None
+        if not isinstance(selected, dict) and isinstance(recipes, dict):
+            selected = next((value for value in recipes.values() if isinstance(value, dict)), None)
+        disk_bytes = selected.get("estimated_disk_bytes") if isinstance(selected, dict) else None
         estimate = Estimate(disk_bytes, isinstance(disk_bytes, int) and disk_bytes > 0)
     except (OSError, ValueError, json.JSONDecodeError):
         estimate = Estimate(None, False)
