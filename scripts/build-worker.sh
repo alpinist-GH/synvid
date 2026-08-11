@@ -32,6 +32,8 @@ PYINSTALLER_CONFIG_DIR="$work_dir/config" "$python_bin" -m PyInstaller \
     --collect-all imageio \
     --collect-all imageio_ffmpeg \
     --collect-all espeakng_loader \
+    --collect-data mlx \
+    --hidden-import mlx._reprlib_fix \
     --collect-all kokoro_onnx \
     --collect-all language_tags \
     --collect-all requests \

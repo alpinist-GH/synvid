@@ -83,3 +83,9 @@ test("model downloads expose byte progress and diagnostics preview", async () =>
   assert.match(source, /operation === "model_download"/);
   assert.match(source, /Preview matches exactly what export will save/);
 });
+
+test("failed generation stays visible after controls refresh", () => {
+  assert.match(source, /lastJobMessage/);
+  assert.match(source, /if \(state\.lastJobMessage\) jobStatus\.textContent = state\.lastJobMessage/);
+  assert.match(source, /if \(failure\) setError\(failure\)/);
+});

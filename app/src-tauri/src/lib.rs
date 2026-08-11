@@ -983,6 +983,14 @@ fn diagnostic_bundle(
             .iter()
             .map(|line| redact_diagnostic_line(line, home.as_deref())),
     );
+    lines.push(String::new());
+    lines.push("recent worker terminal/error events (bounded to 32, redacted):".to_string());
+    lines.extend(
+        supervisor
+            .recent_event_lines()
+            .iter()
+            .map(|line| redact_diagnostic_line(line, home.as_deref())),
+    );
     Ok(json!({"text": lines.join("\n")}))
 }
 

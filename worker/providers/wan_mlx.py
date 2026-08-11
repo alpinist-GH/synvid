@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import traceback
 from typing import Callable
 
 from ..measurement import peak_rss_bytes, total_system_memory_bytes
@@ -204,7 +205,16 @@ class WanMlxProvider:
         guide_scale: float, seed: int, output_path: Path, progress: ProgressCallback,
         cancelled: Callable[[], bool],
     ) -> None:
-        from ..vendor.mlx_video_wan2.wan_2 import generate as generate_module
+        try:
+            from ..vendor.mlx_video_wan2.wan_2 import generate as generate_module
+        except Exception as error:
+            # Keep the protocol error concise, but print the chained native
+            # import failure to the bounded worker diagnostics. PyInstaller
+            # and MLX otherwise reduce this to the opaque extension message.
+            traceback.print_exc()
+            raise WanMlxProviderError(
+                f"Wan MLX runtime initialization failed: {type(error).__name__}: {error}"
+            ) from error
 
         original_print = generate_module.__dict__.get("print")
         # This worker's stdout is the JSON-lines protocol Rust parses; the
@@ -228,7 +238,10 @@ class WanMlxProvider:
         except InterruptedError:
             raise
         except Exception as error:
-            raise WanMlxProviderError("Wan MLX generation failed") from error
+            traceback.print_exc()
+            raise WanMlxProviderError(
+                f"Wan MLX generation failed: {type(error).__name__}: {error}"
+            ) from error
         finally:
             if original_print is None:
                 del generate_module.print

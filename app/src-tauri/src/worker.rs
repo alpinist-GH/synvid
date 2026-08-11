@@ -26,6 +26,7 @@ pub struct WorkerSupervisor {
     stdin: Option<ChildStdin>,
     stdout_events: Option<Receiver<Result<String, String>>>,
     pending_events: Vec<Value>,
+    recent_events: Vec<String>,
     executable: Option<PathBuf>,
     stderr_lines: Arc<Mutex<Vec<String>>>,
 }
@@ -38,6 +39,7 @@ impl WorkerSupervisor {
             stdin: None,
             stdout_events: None,
             pending_events: Vec::new(),
+            recent_events: Vec::new(),
             executable: None,
             stderr_lines: Arc::new(Mutex::new(Vec::new())),
         }
@@ -198,11 +200,13 @@ impl WorkerSupervisor {
                 .stdout_events
                 .as_ref()
                 .ok_or("worker stdout is unavailable")?;
-            match receiver.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            let received = receiver.recv_timeout(remaining.min(Duration::from_millis(100)));
+            match received {
                 Ok(Ok(line)) => {
                     let message: Value = serde_json::from_str(&line).map_err(|_| {
                         self.interrupt_with("worker sent malformed protocol output".into())
                     })?;
+                    self.remember_event(&message);
                     if message.get("request_id").and_then(Value::as_str)
                         == Some(request_id.as_str())
                     {
@@ -230,6 +234,12 @@ impl WorkerSupervisor {
             .clone()
     }
 
+    /// Recent terminal/error protocol messages are kept separately from the
+    /// UI event queue so diagnostics still explain a completed failed job.
+    pub fn recent_event_lines(&self) -> Vec<String> {
+        self.recent_events.clone()
+    }
+
     pub fn take_pending_events(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.pending_events)
     }
@@ -253,6 +263,22 @@ impl WorkerSupervisor {
         // Stderr is drained to prevent child-process backpressure, but is not
         // returned to the webview because libraries may include user inputs.
         format!("worker interrupted: {detail}")
+    }
+
+    fn remember_event(&mut self, message: &Value) {
+        let Some(kind) = message.get("kind").and_then(Value::as_str) else {
+            return;
+        };
+        if kind != "terminal" && kind != "error" {
+            return;
+        }
+        let Ok(line) = serde_json::to_string(message) else {
+            return;
+        };
+        if self.recent_events.len() == 32 {
+            self.recent_events.remove(0);
+        }
+        self.recent_events.push(line);
     }
 }
 

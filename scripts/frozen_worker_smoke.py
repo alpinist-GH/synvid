@@ -35,7 +35,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--status-only", action="store_true")
     parser.add_argument("--story-planner", action="store_true", help="exercise Draft scenes locally through frozen IPC")
-    parser.add_argument("--model", choices=("ltx-video", "flux-schnell"), default="ltx-video")
+    parser.add_argument("--model", choices=("ltx-video", "flux-schnell", "wan2.2-ti2v-5b-mlx"), default="ltx-video")
     parser.add_argument("--recipe", choices=("Draft", "Balanced", "High"), default="Draft")
     parser.add_argument("--narrate-output-id", help="add a short stock-voice narration to an existing owned video output")
     args = parser.parse_args()

@@ -21,7 +21,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", frames: 49, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, lastJobMessage: "", downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", frames: 49, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -325,7 +325,8 @@ function updateControls() {
   generateProfileButton.hidden = !canGenerateProfile;
   setupModelButton.hidden = !state.connected || Boolean(state.activeJob) || (installed && (Boolean(profile) || Boolean(calibration?.reference)));
   if (!state.activeJob) {
-    if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
+    if (state.lastJobMessage) jobStatus.textContent = state.lastJobMessage;
+    else if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
     else if (!installed) jobStatus.textContent = "Install the selected local model before generating.";
     else if (!profile) jobStatus.textContent = hasUncalibratedRecipe(model)
       ? "This model has no measured profile for the selected recipe. Generate one on this Mac before generating."
@@ -402,24 +403,31 @@ function recordTerminal(events) {
   for (const event of events) {
     if (event.kind !== "terminal") continue;
     const payload = event.payload ?? {};
+    const failure = payload.error || (payload.state === "failed" ? "The operation failed." : "");
+    if (payload.state && !payload.story_draft) {
+      state.lastJobMessage = failure || `${payload.operation === "model_download" ? "Model download" : payload.operation === "calibrate" ? "Calibration" : "Generation"} ${payload.state}.`;
+      if (failure) setError(failure);
+      jobStatus.textContent = state.lastJobMessage;
+    }
     if (payload.state === "succeeded" && payload.story_draft?.scenes) {
       draftProposals = payload.story_draft.scenes; renderDraftProposals(); $("#story-draft-note").textContent = "Choose a proposal to copy it into editable scene fields; it is not saved yet."; $("#draft-story-scenes").disabled = false;
     } else if (payload.state && payload.story_draft) {
       $("#story-draft-note").textContent = payload.error || `Story drafting ${payload.state}.`; $("#draft-story-scenes").disabled = false;
     } else if (payload.state === "succeeded" && payload.output_id && !state.variants.some((item) => item.outputId === payload.output_id)) {
       const variant = { outputId: payload.output_id, seed: $("#seed").value, mediaFile: isImageModel() ? "image.png" : "video.mp4" };
-      state.variants.unshift(variant); promoteVariant(variant); jobStatus.textContent = "Generation completed and saved atomically.";
+      state.variants.unshift(variant); promoteVariant(variant); state.lastJobMessage = "Generation completed and saved atomically."; jobStatus.textContent = state.lastJobMessage;
     } else if (payload.operation === "model_download") {
       state.downloadModelJobId = null;
-      jobStatus.textContent = payload.error || `Model download ${payload.state}.`;
+      jobStatus.textContent = state.lastJobMessage;
       if (payload.state === "succeeded" && $("#settings-dialog").open) void showSettings();
     } else if (payload.operation === "calibrate") {
       state.calibrationJobId = null;
-      jobStatus.textContent = payload.state === "succeeded"
+      state.lastJobMessage = payload.state === "succeeded"
         ? "Calibration complete. This recipe is now measured and ready to generate."
-        : (payload.error || `Calibration ${payload.state}.`);
+        : state.lastJobMessage;
+      jobStatus.textContent = state.lastJobMessage;
       if ($("#settings-dialog").open) void showSettings();
-    } else if (payload.state) jobStatus.textContent = payload.error || `Generation ${payload.state}.`;
+    } else if (payload.state) jobStatus.textContent = state.lastJobMessage;
   }
 }
 async function refresh() {
@@ -812,7 +820,7 @@ generateButton.addEventListener("click", async () => {
     setError("Choose a source image before starting image-to-video.");
     return;
   }
-  setError(); generateButton.disabled = true; jobStatus.textContent = "Submitting generation…";
+  setError(); state.lastJobMessage = ""; generateButton.disabled = true; jobStatus.textContent = "Submitting generation…";
   try { const accepted = await invoke("generate", { request: { modelId: state.modelId, prompt, seed, recipe: state.recipe, sourceImageId: state.mode === "image" && !isImageModel() ? state.sourceImageId : null } }); state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "job", status_text: "Loading model", progress: 0 }; jobStatus.textContent = "Loading model…"; }
   catch (reason) { setError(String(reason)); jobStatus.textContent = "Generation was not started."; }
   updateControls();
