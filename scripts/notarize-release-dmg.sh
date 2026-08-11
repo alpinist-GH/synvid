@@ -10,12 +10,12 @@ set -eu
 # Usage:
 #   xcrun notarytool store-credentials PROFILE_NAME \
 #       --apple-id you@example.com --team-id TEAMID --password APP_SPECIFIC_PW
-#   ./scripts/notarize-release-dmg.sh [path/to/AI-Video Synthesizer-0.2.0-signed-unnotarized.dmg]
+#   ./scripts/notarize-release-dmg.sh [path/to/AI-Video Synthesizer-0.2.1-signed-unnotarized.dmg]
 #   (defaults to the "synvid-notary" keychain profile; override with
 #   SYNVID_NOTARY_PROFILE=OTHER_PROFILE)
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source_dmg=${1:-"$root_dir/dist/release/AI-Video Synthesizer-0.2.0-signed-unnotarized.dmg"}
+source_dmg=${1:-"$root_dir/dist/release/AI-Video Synthesizer-0.2.1-signed-unnotarized.dmg"}
 notary_profile=${SYNVID_NOTARY_PROFILE:-synvid-notary}
 
 test -f "$source_dmg"
