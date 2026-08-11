@@ -120,6 +120,13 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(cleaned["freed_bytes"], len(b"temporary")); self.assertFalse(temporary.exists())
             self.assertTrue(service.paths.outputs.is_dir())
 
+    def test_preparation_lists_default_wan_model_before_ltx_video(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = self._service(temp)
+            model_ids = [item["model_id"] for item in service.model_catalog()["models"]]
+            self.assertEqual(model_ids[0], "wan2.2-ti2v-5b-mlx")
+            self.assertLess(model_ids.index("wan2.2-ti2v-5b-mlx"), model_ids.index("ltx-video"))
+
     def test_installed_retired_wan_model_is_removal_only(self):
         with tempfile.TemporaryDirectory() as temp:
             service = self._service(temp)

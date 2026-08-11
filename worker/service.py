@@ -30,6 +30,7 @@ class GenerationError(ValueError):
     pass
 
 
+_PREPARATION_FIRST_MODEL_IDS = ("wan2.2-ti2v-5b-mlx",)
 _SOURCE_IMAGE_ID = re.compile(r"^[a-z0-9-]{16,128}$")
 _OUTPUT_ID = re.compile(r"^[0-9a-f-]{36}$")
 
@@ -455,7 +456,11 @@ class GenerationService:
 
     def model_catalog(self) -> dict:
         """Expose reviewed model facts and local install state, never a download URL."""
-        models = [self._model_status(model_id) for model_id in REGISTRY] + [self._kokoro_status()]
+        ordered_model_ids = [
+            model_id for model_id in _PREPARATION_FIRST_MODEL_IDS if model_id in REGISTRY
+        ]
+        ordered_model_ids.extend(model_id for model_id in REGISTRY if model_id not in ordered_model_ids)
+        models = [self._model_status(model_id) for model_id in ordered_model_ids] + [self._kokoro_status()]
         for model_id in sorted(RETIRED_MODEL_IDS):
             status = self._retired_model_status(model_id)
             if status["installed"]:
