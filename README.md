@@ -232,20 +232,31 @@ that distinction behind a plausible-looking control.
 | **LTX Video** | text/image → video, video editing | LTX-Video Open Weights | 24 GB | ✅ Measured: Draft/Balanced/High at 256×256/8 fps, each across a duration ladder from 9 to 121 frames (1.1s–15.1s); BalancedLandscape 512×288/49 frames fixed |
 | **FLUX.1-schnell** | text → image | Apache-2.0 | 54 GB | ✅ Measured: 512×512, 4 steps, bf16 — 48.5s, ~33.7 GB peak MPS |
 | **Qwen Image Edit** | image editing | Apache-2.0 | 57.7 GB | ✅ Measured: 512×512, 4 steps, bf16 — 621s first run, ~57.7 GB peak MPS |
-| **HunyuanVideo 1.5 480p** (T2V and I2V) | text/image → video | Tencent Hunyuan Community License — **excludes the EU, UK, and South Korea** | 53.4 / 54.2 GB | ⚠️ **Never measured on this Mac** — an unvalidated placeholder test profile only (848×480, 121 frames, 24 fps, 50 steps) |
-| FLUX.1-dev | text → image | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, not selectable in the generation UI |
-| FLUX.1-Kontext-dev | image editing | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, not wired to any command |
+| **HunyuanVideo 1.5 480p** (T2V and I2V) | text/image → video | Tencent Hunyuan Community License — **excludes the EU, UK, and South Korea** | 53.4 / 54.2 GB | ⚠️ **Never measured on this Mac** — an unvalidated placeholder test profile only (848×480, 121 frames, 24 fps, 50 steps); registered but hidden from the app entirely (below) |
+| **Wan 2.2 TI2V-5B (MLX)** | text → video | Apache-2.0 weights (`Wan-AI/Wan2.2-TI2V-5B`); MLX runtime code is a vendored, patched MIT-licensed subset of `Blaizzy/mlx-video` | 23 GB | 🟡 Provisionally measured through a distinct Apple-native MLX runtime, not the retired Diffusers/MPS pipeline (see below) — one recipe only, Balanced Landscape (1280×704, 41 frames/24 fps, ~10 min, ~40 GB peak MLX memory on this 48 GB Mac); verified generating from the packaged, notarizable `.app` build, but not yet through the same multi-prompt quality gate the ✅ models passed |
+| FLUX.1-dev | text → image | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, hidden from the app entirely (below) |
+| FLUX.1-Kontext-dev | image editing | FLUX.1-dev non-commercial | 54 GB | Registered, personal/research only, hidden from the app entirely (below); not wired to any command |
 | Qwen Story Planner (Qwen2.5-1.5B-Instruct) | Story Mode scene drafting | Apache-2.0 | 2.9 GB | ❌ Failed its adversarial structured-output gate; the "Draft scenes locally" button is disabled in the UI. Manual Story Mode authoring is unaffected. |
 
-Only LTX Video, FLUX.1-schnell, and both HunyuanVideo 1.5 480p entries are
-selectable in the **Create** (generation) model dropdown
-(`app/src-tauri/src/lib.rs`'s `ENABLED_GENERATION_MODELS`, 4 entries). Qwen
-Image Edit is reachable only through the separate **Edit Image** flow, not
-the Create dropdown. FLUX.1-dev, FLUX.1-Kontext-dev, and the story planner
-remain registered for their explicit unavailable-state explanations. Wan 2.1
-and Wan 2.2 are retired after failed local quality gates; they are neither
-selectable nor downloadable. An existing retired snapshot is shown in
-Settings only as removal-only cleanup.
+Only LTX Video, FLUX.1-schnell, and Wan 2.2 TI2V-5B (MLX) are selectable in
+the **Create** (generation) model dropdown (`app/src-tauri/src/lib.rs`'s
+`ENABLED_GENERATION_MODELS`, 3 entries). Qwen Image Edit is reachable only
+through the separate **Edit Image** flow, not the Create dropdown.
+FLUX.1-dev, FLUX.1-Kontext-dev, HunyuanVideo 1.5 480p (T2V and I2V), and the
+story planner remain registered in `worker/models.py` but are hidden from
+both the Create dropdown and the **Preparation** tab's model list
+(`app/src/main.js`'s `SETTINGS_HIDDEN_MODEL_IDS`) — the story planner is
+the one exception, shown only for its disabled "Draft scenes locally"
+explanation, not for download. Wan 2.1 and the original Wan 2.2 TI2V-5B
+(Diffusers/MPS, `WanPipeline`) are retired after failed local quality
+gates; they are neither selectable nor downloadable, and an existing
+retired snapshot is shown in Preparation only as removal-only cleanup.
+`wan2.2-ti2v-5b-mlx` is a distinct, newer entry that runs the same upstream
+weights through an Apple-native MLX runtime instead
+(`worker/providers/wan_mlx.py`, `worker/vendor/mlx_video_wan2`) and is a
+real, working, selectable, downloadable model — see
+`docs/measurements/wan2.2-ti2v-5b-mlx-gate-2026-08-10.md` for the full
+runtime/memory/quality evidence and its still-open follow-up items.
 
 ## Generation, quality, and export
 
@@ -284,9 +295,10 @@ re-encodes from the same source again.
   change amount from 0.05 to 0.95 (mapped internally to the pipeline's
   strength/denoise-strength), plus a prompt. Measured and accepted range is
   0.05–0.75; 0.75+ was visibly degraded in testing and is kept only as a UI
-  maximum, not a recommended value. Wan has no video-editing path — it
-  never passed its own generation quality gate, so no source/comparison
-  ever existed to build one against.
+  maximum, not a recommended value. Wan has no video-editing path — the
+  retired Diffusers/MPS pipeline never passed its own generation quality
+  gate, and the newer `wan2.2-ti2v-5b-mlx` entry (provisionally measured
+  for generation only) has not been extended to editing either.
 - **Image editing** (Qwen Image Edit only, via `QwenImageEditPipeline`): a
   prompt plus the measured profile above; no user-set resolution/steps.
 - Both paths read the source file read-only and write a brand-new output

@@ -29,12 +29,37 @@
           <p id="connection" class="status" role="status" aria-live="polite">Connecting to worker…</p>
         </header>
         <div class="workspace-tabs" role="tablist" aria-label="Create workspace">
-          <button id="compose-tab" class="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="compose-panel" data-workspace-tab="compose"><span aria-hidden="true">✦</span>Compose</button>
+          <button id="preparation-tab" class="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="preparation-panel" data-workspace-tab="preparation"><span aria-hidden="true">◌</span>Preparation</button>
+          <button id="compose-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="compose-panel" data-workspace-tab="compose"><span aria-hidden="true">✦</span>Compose</button>
           <button id="review-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="review-panel" data-workspace-tab="review"><span aria-hidden="true">◉</span>Review</button>
           <button id="refine-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="refine-panel" data-workspace-tab="refine"><span aria-hidden="true">✧</span>Refine</button>
         </div>
 
-        <div id="compose-panel" class="workspace-panel" role="tabpanel" aria-labelledby="compose-tab">
+        <div id="preparation-panel" class="workspace-panel" role="tabpanel" aria-labelledby="preparation-tab">
+          <section class="preparation-intro" aria-labelledby="preparation-title">
+            <p class="eyebrow">READY YOUR LOCAL WORKSPACE</p>
+            <h3 id="preparation-title">Prepare before you compose</h3>
+            <p class="field-help">Download a local model and generate its measured profile here. These actions can use substantial disk space or memory and are kept separate from video generation.</p>
+          </section>
+          <section class="preparation-models" aria-labelledby="preparation-models-title">
+            <div class="section-heading"><h3 id="preparation-models-title">Local models</h3><p>Choose what SynVid can run on this Mac.</p></div>
+            <div id="preparation-model-list" class="model-list" aria-live="polite">Loading model catalog…</div>
+          </section>
+          <p id="preparation-status" class="preparation-status" role="status" aria-live="polite">Model downloads and profile generation will appear here.</p>
+          <button id="preparation-cancel" class="secondary preparation-cancel" type="button" hidden>Cancel preparation</button>
+          <section id="model-download-status" class="model-download-status" hidden aria-labelledby="model-download-title">
+            <h3 id="model-download-title">Model download</h3>
+            <p id="model-download-status-text" class="field-help" role="status" aria-live="polite"></p>
+            <progress id="model-download-progress" max="100" value="0" aria-label="Model download progress"></progress>
+          </section>
+          <section id="model-calibration-status" class="model-download-status" hidden aria-labelledby="model-calibration-title">
+            <h3 id="model-calibration-title">Profile generation</h3>
+            <p id="model-calibration-status-text" class="field-help" role="status" aria-live="polite"></p>
+            <progress id="model-calibration-progress" max="100" value="0" aria-label="Profile generation progress"></progress>
+          </section>
+        </div>
+
+        <div id="compose-panel" class="workspace-panel" role="tabpanel" aria-labelledby="compose-tab" hidden>
           <label for="prompt">Describe your video</label>
           <textarea id="prompt" maxlength="4000" placeholder="A yellow flower gently moving in a spring breeze" autofocus></textarea>
           <p class="field-help">Your prompt stays on this Mac. SynVid does not download a model or render during setup.</p>
@@ -134,7 +159,7 @@
               <button type="button" data-aspect="Landscape" role="radio" aria-checked="false">Landscape</button>
               <button type="button" data-aspect="Portrait" role="radio" aria-checked="false">Portrait</button>
             </div>
-            <p class="field-help">Each aspect ratio needs its own measured profile. Calibrate it in Settings before it can be generated.</p>
+            <p class="field-help">Each aspect ratio needs its own measured profile. Generate it in Preparation before it can be generated.</p>
           </fieldset>
           <fieldset id="duration-field">
             <legend>Duration <output id="duration-value" for="duration-slider">6.1s</output></legend>
@@ -154,10 +179,7 @@
         <div class="action-area">
           <p id="job-status" role="status" aria-live="polite">Ready when the measured profile is available.</p>
           <progress id="generation-progress" class="generation-progress" max="100" value="0" hidden aria-label="Generation progress"></progress>
-          <progress id="profile-generation-progress" class="generation-progress" max="100" value="0" hidden aria-label="Profile generation progress"></progress>
           <button id="generate" class="generate" type="button" disabled>Generate video</button>
-          <button id="generate-profile" class="generate" type="button" hidden>Generate profile</button>
-          <button id="setup-model" class="secondary" type="button" hidden>Set up a local model…</button>
           <button id="cancel" class="secondary" type="button" hidden>Cancel generation</button>
         </div>
       </section>
@@ -198,18 +220,7 @@
     </section>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>
-      <p class="field-help">Models are stored only in SynVid Application Support. SynVid starts without a Hugging Face account or API token. Downloads always require a separate license, size, and revision confirmation.</p>
-      <section aria-labelledby="models-title"><h3 id="models-title">Local AI models</h3><div id="model-list" class="model-list" aria-live="polite">Loading model catalog…</div></section>
-      <section id="model-download-status" class="model-download-status" hidden aria-labelledby="model-download-title">
-        <h3 id="model-download-title">Model download</h3>
-        <p id="model-download-status-text" class="field-help" role="status" aria-live="polite"></p>
-        <progress id="model-download-progress" max="100" value="0" aria-label="Model download progress"></progress>
-      </section>
-      <section id="model-calibration-status" class="model-download-status" hidden aria-labelledby="model-calibration-title">
-        <h3 id="model-calibration-title">Model calibration</h3>
-        <p id="model-calibration-status-text" class="field-help" role="status" aria-live="polite"></p>
-        <progress id="model-calibration-progress" max="100" value="0" aria-label="Model calibration progress"></progress>
-      </section>
+      <p class="field-help">Models are stored only in SynVid Application Support. Use the Preparation tab to download a model or generate its local profile. SynVid starts without a Hugging Face account or API token.</p>
       <section class="temporary-cleanup" aria-labelledby="temporary-title">
         <h3 id="temporary-title">Temporary files</h3>
         <p class="field-help">Remove imported copies, interrupted-work files, and temporary render data. Completed outputs, stories, and installed models are not affected.</p>

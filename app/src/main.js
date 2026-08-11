@@ -9,14 +9,15 @@ const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
 const SETTINGS_HIDDEN_MODEL_IDS = new Set(["flux-dev", "flux-kontext-dev", "hunyuan15-480p-t2v", "hunyuan15-480p-i2v"]);
 const WALKTHROUGH_STEPS = [
-  { target: "#prompt", title: "1. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
-  { target: "[data-mode=\"text\"]", title: "2. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
-  { target: "#model", title: "3. Pick a model", copy: "Choose the kind of result you need. LTX Video makes video; FLUX.1-schnell makes a still image. If a model is missing, Set up a local model opens Settings with its size, license, and fixed revision before any download." },
-  { target: "#recipe-buttons", title: "4. Select a measured recipe", copy: "Balanced is the recommended starting point. Recipes are available only when they have passed a local measurement on this Mac, so the app does not promise unsupported quality or speed." },
-  { target: "#seed", title: "5. Control variations", copy: "Keep a seed to make a comparable variation, or use Randomize for a new one. Undo and Redo restore recent prompt, seed, and recipe changes." },
-  { target: "#generate", title: "6. Generate locally", copy: "Generate starts the selected measured model. Progress and Cancel stay here while it runs. No model download or render begins until you explicitly press a button." },
-  { target: "#variant-list", title: "7. Review and refine", copy: "Each finished output appears in Variants. Select one to preview it, export it, or use Edit video, Add Voice, or image editing when those tools are available." },
-  { target: "#library-button", title: "8. Keep or clean up", copy: "Library reopens or deletes completed local work. Settings manages downloaded models and temporary files. Recovery Center only removes incomplete temporary work, never finished outputs." },
+  { target: "#preparation-tab", title: "1. Prepare local models", copy: "Start here to see the models available for local use. Download a model only after reviewing its size, license, and fixed revision, then generate a measured profile before composing." },
+  { target: "#prompt", title: "2. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
+  { target: "[data-mode=\"text\"]", title: "3. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
+  { target: "#model", title: "4. Pick a model", copy: "Choose the prepared model for the result you need. LTX Video makes video; FLUX.1-schnell makes a still image. Downloads and profile generation stay in Preparation." },
+  { target: "#recipe-buttons", title: "5. Select a measured recipe", copy: "Balanced is the recommended starting point. Recipes are available only when they have passed a local measurement on this Mac, so the app does not promise unsupported quality or speed." },
+  { target: "#seed", title: "6. Control variations", copy: "Keep a seed to make a comparable variation, or use Randomize for a new one. Undo and Redo restore recent prompt, seed, and recipe changes." },
+  { target: "#generate", title: "7. Generate locally", copy: "Generate starts the selected measured model. Progress and Cancel stay here while it runs. Model download and profile generation happen separately in Preparation." },
+  { target: "#variant-list", title: "8. Review and refine", copy: "Each finished output appears in Variants. Select one to preview it, export it, or use Edit video, Add Voice, or image editing when those tools are available." },
+  { target: "#library-button", title: "9. Keep or clean up", copy: "Library reopens or deletes completed local work. Preparation manages downloaded models and profiles. Recovery Center only removes incomplete temporary work, never finished outputs." },
 ];
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
@@ -31,11 +32,9 @@ const connection = $("#connection");
 const jobStatus = $("#job-status");
 const generateButton = $("#generate");
 const cancelButton = $("#cancel");
-const setupModelButton = $("#setup-model");
-const generateProfileButton = $("#generate-profile");
+const preparationCancelButton = $("#preparation-cancel");
 const error = $("#form-error");
 const generationProgress = $("#generation-progress");
-const profileGenerationProgress = $("#profile-generation-progress");
 const modelDownloadProgress = $("#model-download-progress");
 const modelDownloadStatus = $("#model-download-status");
 const modelCalibrationProgress = $("#model-calibration-progress");
@@ -70,6 +69,7 @@ function setWorkspaceTab(name) {
     button.setAttribute("aria-selected", String(selected));
     $("#" + button.getAttribute("aria-controls")).hidden = !selected;
   }
+  if (name === "preparation") void loadPreparationCatalog();
 }
 function stopWalkthrough() {
   document.querySelectorAll(".walkthrough-target").forEach((element) => element.classList.remove("walkthrough-target"));
@@ -128,22 +128,20 @@ function renderModelDownloadProgress(job) {
   modelDownloadProgress.value = percent;
   modelDownloadProgress.setAttribute("aria-valuetext", `${percent}%`);
   $("#model-download-status-text").textContent = `${job.status_text || job.statusText || "Downloading model"} · ${percent}%`;
+  $("#preparation-status").textContent = `${job.status_text || job.statusText || "Downloading model"} · ${percent}%`;
 }
 function renderCalibrationProgress(job) {
   const calibrating = job?.operation === "calibrate" || (job && state.calibrationJobId === (job.job_id || job.jobId));
   modelCalibrationStatus.hidden = !calibrating;
-  profileGenerationProgress.hidden = !calibrating;
   if (!calibrating) {
     modelCalibrationProgress.value = 0;
-    profileGenerationProgress.value = 0;
     return;
   }
   const percent = Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
   modelCalibrationProgress.value = percent;
-  profileGenerationProgress.value = percent;
   modelCalibrationProgress.setAttribute("aria-valuetext", `${percent}%`);
-  profileGenerationProgress.setAttribute("aria-valuetext", `${percent}%`);
   $("#model-calibration-status-text").textContent = `${job.status_text || job.statusText || "Calibrating model"} · ${percent}%`;
+  $("#preparation-status").textContent = `${job.status_text || job.statusText || "Generating profile"} · ${percent}%`;
 }
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
@@ -317,13 +315,11 @@ function updateControls() {
   normalizeSelection();
   const model = selectedModel(); const profile = activeProfile();
   const installed = Boolean(model?.installed);
-  const calibration = model?.calibration?.[state.recipe];
-  const canGenerateProfile = state.connected && installed && !profile && Boolean(calibration?.reference) && !state.activeJob;
   const available = state.connected && profile && installed && !state.activeJob;
-  generateButton.disabled = !available; cancelButton.hidden = !state.activeJob;
+  const preparationJob = state.activeJob?.operation === "model_download" || state.activeJob?.operation === "calibrate";
+  generateButton.disabled = !available; cancelButton.hidden = !state.activeJob || preparationJob;
+  preparationCancelButton.hidden = !preparationJob;
   cancelButton.textContent = state.activeJob?.operation === "calibrate" ? "Cancel profile generation" : "Cancel generation";
-  generateProfileButton.hidden = !canGenerateProfile;
-  setupModelButton.hidden = !state.connected || Boolean(state.activeJob) || (installed && (Boolean(profile) || Boolean(calibration?.reference)));
   if (!state.activeJob) {
     if (state.lastJobMessage) jobStatus.textContent = state.lastJobMessage;
     else if (!state.connected) jobStatus.textContent = "The local worker is unavailable. Reopen SynVid, then try again.";
@@ -404,7 +400,8 @@ function recordTerminal(events) {
     if (event.kind !== "terminal") continue;
     const payload = event.payload ?? {};
     const failure = payload.error || (payload.state === "failed" ? "The operation failed." : "");
-    if (payload.state && !payload.story_draft) {
+    const preparationOperation = payload.operation === "model_download" || payload.operation === "calibrate";
+    if (payload.state && !payload.story_draft && !preparationOperation) {
       state.lastJobMessage = failure || `${payload.operation === "model_download" ? "Model download" : payload.operation === "calibrate" ? "Calibration" : "Generation"} ${payload.state}.`;
       if (failure) setError(failure);
       jobStatus.textContent = state.lastJobMessage;
@@ -418,15 +415,15 @@ function recordTerminal(events) {
       state.variants.unshift(variant); promoteVariant(variant); state.lastJobMessage = "Generation completed and saved atomically."; jobStatus.textContent = state.lastJobMessage;
     } else if (payload.operation === "model_download") {
       state.downloadModelJobId = null;
-      jobStatus.textContent = state.lastJobMessage;
-      if (payload.state === "succeeded" && $("#settings-dialog").open) void showSettings();
+      $("#preparation-status").textContent = failure || (payload.state === "succeeded" ? "Model download complete. Generate a profile before composing." : `Model download ${payload.state}.`);
+      if (failure) setError(failure);
+      void loadPreparationCatalog();
     } else if (payload.operation === "calibrate") {
       state.calibrationJobId = null;
-      state.lastJobMessage = payload.state === "succeeded"
-        ? "Calibration complete. This recipe is now measured and ready to generate."
-        : state.lastJobMessage;
-      jobStatus.textContent = state.lastJobMessage;
-      if ($("#settings-dialog").open) void showSettings();
+      const message = failure || (payload.state === "succeeded" ? "Profile generation complete. This recipe is now measured and ready to compose." : `Profile generation ${payload.state}.`);
+      $("#preparation-status").textContent = message;
+      if (failure) setError(failure);
+      void loadPreparationCatalog();
     } else if (payload.state) jobStatus.textContent = state.lastJobMessage;
   }
 }
@@ -437,7 +434,11 @@ async function refresh() {
     if (state.activeJob?.operation === "model_download") state.downloadModelJobId = state.activeJob.job_id || state.activeJob.jobId;
     if (state.activeJob?.operation === "calibrate") state.calibrationJobId = state.activeJob.job_id || state.activeJob.jobId;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
-    if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
+    if (state.activeJob) {
+      const activeText = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
+      if (state.activeJob.operation === "model_download" || state.activeJob.operation === "calibrate") $("#preparation-status").textContent = activeText;
+      else jobStatus.textContent = activeText;
+    }
     recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); renderCalibrationProgress(state.activeJob); renderRecipeNote(); renderDurationControl(); void maybeShowRequiredModelSetup();
   } catch { state.connected = false; connection.textContent = "Worker unavailable"; updateControls(); }
 }
@@ -471,7 +472,7 @@ async function downloadRequiredModel() {
     const accepted = await invoke("download_model", { modelId: requiredModel.model_id });
     state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "model_download", status_text: "Downloading " + requiredModel.display_name, progress: 0 };
     state.downloadModelJobId = state.activeJob.job_id;
-    jobStatus.textContent = "Downloading " + requiredModel.display_name + "…";
+    $("#preparation-status").textContent = "Downloading " + requiredModel.display_name + "…";
     $("#required-model-dialog").close();
     updateControls();
   } catch (reason) {
@@ -526,7 +527,7 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 ** power)).toFixed(power < 3 ? 0 : 1)} ${units[power]}`;
 }
 function renderModelCatalog(models) {
-  const list = $("#model-list"); list.replaceChildren();
+  const list = $("#preparation-model-list"); list.replaceChildren();
   for (const model of models.filter((candidate) => !SETTINGS_HIDDEN_MODEL_IDS.has(candidate.model_id))) {
     const item = document.createElement("article"); item.className = "model-card";
     const title = document.createElement("h4"); title.textContent = model.display_name;
@@ -545,10 +546,10 @@ function renderModelCatalog(models) {
         remove.disabled = true;
         try {
           const result = await invoke("remove_model", { modelId: model.model_id });
-          $("#cleanup-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.` : `${model.display_name} was already absent.`;
-          await showSettings();
+          $("#preparation-status").textContent = result.removed ? `${model.display_name} removed; freed ${formatBytes(result.freed_bytes ?? result.freedBytes)}.` : `${model.display_name} was already absent.`;
+          await loadPreparationCatalog();
         } catch (reason) {
-          $("#cleanup-status").textContent = `Could not remove ${model.display_name}: ${String(reason)}.`;
+          $("#preparation-status").textContent = `Could not remove ${model.display_name}: ${String(reason)}.`;
           remove.disabled = false;
         }
       });
@@ -567,7 +568,7 @@ function renderModelCatalog(models) {
           const accepted = await invoke("download_model", { modelId: model.model_id });
           state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "model_download", status_text: `Downloading ${model.display_name}`, progress: 0 };
           state.downloadModelJobId = state.activeJob.job_id;
-          jobStatus.textContent = `Downloading ${model.display_name}…`;
+          $("#preparation-status").textContent = `Downloading ${model.display_name}…`;
           updateControls();
         } catch (reason) { setError(String(reason)); download.disabled = false; }
       });
@@ -576,7 +577,7 @@ function renderModelCatalog(models) {
     if (model.installed && model.calibration) {
       for (const [recipeName, info] of Object.entries(model.calibration)) {
         if (info.measured || !info.reference) continue;
-        const calibrate = document.createElement("button"); calibrate.type = "button"; calibrate.textContent = `Calibrate ${recipeName}…`;
+        const calibrate = document.createElement("button"); calibrate.type = "button"; calibrate.textContent = `Generate ${recipeName} profile…`;
         calibrate.addEventListener("click", () => void runCalibration(model, recipeName, info.reference, calibrate));
         item.append(calibrate);
       }
@@ -599,14 +600,29 @@ async function runCalibration(model, recipeName, reference, button) {
     const accepted = await invoke("calibrate_model", { modelId: model.model_id, recipe: recipeName });
     state.activeJob = { job_id: accepted.job_id || accepted.jobId, operation: "calibrate", status_text: `Calibrating ${model.display_name}`, progress: 0 };
     state.calibrationJobId = state.activeJob.job_id;
-    jobStatus.textContent = `Generating a profile for ${model.display_name}…`;
+    $("#preparation-status").textContent = `Generating a profile for ${model.display_name}…`;
     updateControls();
   } catch (reason) { setError(String(reason)); button.disabled = false; }
 }
+async function loadPreparationCatalog() {
+  const list = $("#preparation-model-list");
+  if (!list || list.dataset.loading === "true") return;
+  list.dataset.loading = "true";
+  list.textContent = "Loading model catalog…";
+  try {
+    const { models = [] } = await invoke("model_catalog");
+    renderModelCatalog(models);
+  } catch (reason) {
+    list.textContent = "Model catalog unavailable while the worker is disconnected.";
+    $("#preparation-status").textContent = "Open Preparation again after the local worker reconnects.";
+    setError(String(reason));
+  } finally {
+    list.dataset.loading = "false";
+  }
+}
 async function showSettings() {
-  const dialog = $("#settings-dialog"); $("#model-list").textContent = "Loading model catalog…"; if (!dialog.open) dialog.showModal();
-  try { const { models = [] } = await invoke("model_catalog"); renderModelCatalog(models); }
-  catch (reason) { $("#model-list").textContent = "Model catalog unavailable while the worker is disconnected."; setError(String(reason)); }
+  const dialog = $("#settings-dialog");
+  if (!dialog.open) dialog.showModal();
 }
 async function showAbout() {
   const dialog = $("#about-dialog"); $("#about-version").textContent = "Version…"; dialog.showModal();
@@ -684,11 +700,6 @@ $("#choose-image").addEventListener("click", async () => {
   catch (reason) { setError(String(reason)); }
 });
 $("#model").addEventListener("change", () => { state.modelId = $("#model").value; state.frames = 49; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
-generateProfileButton.addEventListener("click", () => {
-  const model = selectedModel(); const calibration = model?.calibration?.[state.recipe];
-  if (!model || !calibration?.reference) return setError("The selected model has no available profile recipe.");
-  void runCalibration(model, state.recipe, calibration.reference, generateProfileButton);
-});
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;
@@ -735,7 +746,6 @@ $("#generate-voice").addEventListener("click", async () => {
   } catch (reason) { setError(String(reason)); }
 });
 $("#reset-preset").addEventListener("click", () => { state.frames = 49; setAspect("Square"); setRecipe("Balanced"); saveHistory(); });
-setupModelButton.addEventListener("click", showSettings);
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#library-button").addEventListener("click", () => showLibrary()); $("#settings-button").addEventListener("click", showSettings); $("#about-button").addEventListener("click", showAbout); $("#recovery-button").addEventListener("click", showRecovery);
@@ -825,5 +835,16 @@ generateButton.addEventListener("click", async () => {
   catch (reason) { setError(String(reason)); jobStatus.textContent = "Generation was not started."; }
   updateControls();
 });
-cancelButton.addEventListener("click", async () => { if (!state.activeJob) return; cancelButton.disabled = true; jobStatus.textContent = "Cancelling generation…"; try { await invoke("cancel", { jobId: state.activeJob.job_id || state.activeJob.jobId }); } catch (reason) { setError(String(reason)); } finally { cancelButton.disabled = false; } });
-void refresh(); window.setInterval(() => void refresh(), 750);
+async function cancelActiveJob(button) {
+  if (!state.activeJob) return;
+  button.disabled = true;
+  const preparationJob = state.activeJob.operation === "model_download" || state.activeJob.operation === "calibrate";
+  if (preparationJob) $("#preparation-status").textContent = "Cancelling preparation…";
+  else jobStatus.textContent = "Cancelling generation…";
+  try { await invoke("cancel", { jobId: state.activeJob.job_id || state.activeJob.jobId }); }
+  catch (reason) { setError(String(reason)); }
+  finally { button.disabled = false; }
+}
+cancelButton.addEventListener("click", () => void cancelActiveJob(cancelButton));
+preparationCancelButton.addEventListener("click", () => void cancelActiveJob(preparationCancelButton));
+void loadPreparationCatalog(); void refresh(); window.setInterval(() => void refresh(), 750);

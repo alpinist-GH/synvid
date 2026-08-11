@@ -31,12 +31,19 @@ test("missing required video setup opens an explicit download dialog", () => {
   assert.match(markup, /Download and validate/);
 });
 
-test("an unavailable profile offers generation with live progress", () => {
-  assert.match(markup, /id="generate-profile"/);
-  assert.match(markup, /id="profile-generation-progress"/);
-  assert.match(source, /canGenerateProfile/);
+test("preparation is a separate tab before compose", () => {
+  assert.match(markup, /id="preparation-tab"[^>]*aria-selected="true"/);
+  assert.match(markup, /id="preparation-panel"/);
+  assert.match(markup, /id="preparation-model-list"/);
+  assert.match(markup, /id="preparation-cancel"/);
+  assert.ok(markup.indexOf("data-workspace-tab=\"preparation\"") < markup.indexOf("data-workspace-tab=\"compose\""));
+  assert.match(source, /function loadPreparationCatalog/);
+  assert.match(source, /renderModelCatalog\(models\)/);
   assert.match(source, /invoke\("calibrate_model"/);
-  assert.match(source, /profileGenerationProgress/);
+  assert.match(source, /Generate \$\{recipeName\} profile/);
+  assert.doesNotMatch(markup, /id="setup-model"/);
+  assert.doesNotMatch(markup, /id="generate-profile"/);
+  assert.doesNotMatch(source, /const setupModelButton/);
 });
 
 test("video controls follow each model's measured recipe shapes", () => {

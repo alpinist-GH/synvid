@@ -129,3 +129,25 @@ here.
   since `Blaizzy/mlx-video` has no matching PyPI release) — a new SBOM/license
   entry, not yet run through the license-scan tooling mentioned in the
   Stage 8 gate.
+
+## Update — 2026-08-11: packaging fixed and verified
+
+The "PyInstaller packaging is unverified" gap above is closed. The frozen
+`.app` build was failing to import the vendored MLX runtime because
+`scripts/build-worker.sh`'s PyInstaller invocation had no collection
+directives for `mlx` at all; fixed by adding `--collect-data mlx
+--hidden-import mlx._reprlib_fix`. Along the way, `worker/providers/wan_mlx.py`
+was changed to chain the underlying import/generation exception into
+`WanMlxProviderError`'s message instead of a bare "Wan MLX generation
+failed", and the Rust worker supervisor now keeps a bounded 32-entry log of
+recent terminal/error protocol events for the diagnostic bundle
+(`WorkerSupervisor::recent_event_lines`, `app/src-tauri/src/worker.rs`) —
+both added specifically because a packaged-only MLX import failure had
+been opaque to diagnose without rebuilding from source.
+
+User-verified end-to-end against the real packaged, notarizable `.app`: a
+Wan 2.2 TI2V-5B (MLX) generation completed successfully. This confirms the
+runtime packages and runs correctly outside a source checkout; it does
+**not** change anything else in this document — the recipe is still one
+shape only (Balanced Landscape), and quality is still provisional, not the
+full multi-prompt gate other ✅ models passed.
