@@ -6,7 +6,7 @@
   "build": { "frontendDist": "../src" },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "label": "main", "title": "SynVid", "width": 1200, "height": 780, "resizable": true }],
+    "windows": [{ "label": "main", "title": "AI-Video Synthesizer", "width": 1200, "height": 780, "resizable": true }],
     "security": {
       "assetProtocol": {
         "enable": true,
