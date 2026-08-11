@@ -32,7 +32,7 @@ struct GenerateRequest {
     source_image_id: Option<String>,
 }
 
-const ENABLED_GENERATION_MODELS: &[&str] = &["ltx-video", "flux-schnell", "wan2.2-ti2v-5b-mlx"];
+const ENABLED_GENERATION_MODELS: &[&str] = &["wan2.2-ti2v-5b-mlx", "ltx-video", "flux-schnell"];
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

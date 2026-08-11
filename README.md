@@ -240,7 +240,7 @@ that distinction behind a plausible-looking control.
 
 Only LTX Video, FLUX.1-schnell, and Wan 2.2 TI2V-5B (MLX) are selectable in
 the **Create** (generation) model dropdown (`app/src-tauri/src/lib.rs`'s
-`ENABLED_GENERATION_MODELS`, 3 entries). Qwen Image Edit is reachable only
+`ENABLED_GENERATION_MODELS`, 3 entries), with Wan 2.2 selected by default. Qwen Image Edit is reachable only
 through the separate **Edit Image** flow, not the Create dropdown.
 FLUX.1-dev, FLUX.1-Kontext-dev, HunyuanVideo 1.5 480p (T2V and I2V), and the
 story planner remain registered in `worker/models.py` but are hidden from

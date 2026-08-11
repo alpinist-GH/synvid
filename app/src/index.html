@@ -139,38 +139,58 @@
         <div>
           <p class="eyebrow">VALIDATED CONTROLS</p><h2 id="controls-title">Controls</h2>
           <dl class="facts">
-            <div><dt>Model</dt><dd><select id="model" aria-label="Generation model"><option value="ltx-video">LTX Video</option><option value="flux-schnell">FLUX.1-schnell (image)</option><option value="wan2.2-ti2v-5b-mlx">Wan 2.2 TI2V 5B (MLX, experimental)</option></select></dd></div>
+            <div><dt>Model</dt><dd><select id="model" aria-label="Generation model"><option value="wan2.2-ti2v-5b-mlx">Wan 2.2 TI2V 5B</option><option value="ltx-video">LTX Video</option><option value="flux-schnell">FLUX.1-schnell (image)</option></select></dd></div>
             <div><dt>Profile</dt><dd id="profile">Awaiting measured profile</dd></div>
             <div><dt>Native FPS</dt><dd id="fps">—</dd></div>
           </dl>
-          <fieldset>
-            <legend>Generation recipe</legend>
-            <div id="recipe-buttons" class="recipe-buttons" role="radiogroup" aria-label="Generation recipe">
-              <button type="button" data-recipe="Draft" role="radio" aria-checked="false">Draft</button>
-              <button type="button" data-recipe="Balanced" role="radio" aria-checked="true">Balanced</button>
-              <button type="button" data-recipe="High" role="radio" aria-checked="false">High</button>
+          <section id="model-settings" aria-labelledby="model-settings-title">
+            <div id="wan-settings" class="wan-settings" hidden>
+              <h3 id="model-settings-title">Wan 2.2 settings</h3>
+              <p class="field-help">Wan 2.2 currently exposes one measured text-to-video shape. The values below are fixed to the provider's accepted profile.</p>
+              <dl class="facts wan-settings-list">
+                <div><dt>Mode</dt><dd>Text to video</dd></div>
+                <div><dt>Resolution</dt><dd>1280 × 704</dd></div>
+                <div><dt>Frames</dt><dd>41</dd></div>
+                <div><dt>Native FPS</dt><dd>24</dd></div>
+                <div><dt>Duration</dt><dd>1.7 seconds (fixed)</dd></div>
+                <div><dt>Steps</dt><dd>40</dd></div>
+                <div><dt>Guidance</dt><dd>5.0</dd></div>
+                <div><dt>Scheduler</dt><dd>UniPC</dd></div>
+                <div><dt>VAE tiling</dt><dd>Automatic</dd></div>
+              </dl>
+              <p class="field-help">No alternate recipe, aspect ratio, duration, image-to-video mode, LoRA, or interpolation option is wired for this model.</p>
             </div>
-            <p id="recipe-note" class="field-help">Draft, Balanced, and High are measured across a range of durations on this Mac.</p>
-          </fieldset>
-          <fieldset>
-            <legend>Aspect ratio</legend>
-            <div id="aspect-buttons" class="recipe-buttons" role="radiogroup" aria-label="Aspect ratio">
-              <button type="button" data-aspect="Square" role="radio" aria-checked="true">Square</button>
-              <button type="button" data-aspect="Landscape" role="radio" aria-checked="false">Landscape</button>
-              <button type="button" data-aspect="Portrait" role="radio" aria-checked="false">Portrait</button>
+            <div id="generic-generation-controls">
+              <fieldset>
+                <legend>Generation recipe</legend>
+                <div id="recipe-buttons" class="recipe-buttons" role="radiogroup" aria-label="Generation recipe">
+                  <button type="button" data-recipe="Draft" role="radio" aria-checked="false">Draft</button>
+                  <button type="button" data-recipe="Balanced" role="radio" aria-checked="true">Balanced</button>
+                  <button type="button" data-recipe="High" role="radio" aria-checked="false">High</button>
+                </div>
+                <p id="recipe-note" class="field-help">Draft, Balanced, and High are measured across a range of durations on this Mac.</p>
+              </fieldset>
+              <fieldset>
+                <legend>Aspect ratio</legend>
+                <div id="aspect-buttons" class="recipe-buttons" role="radiogroup" aria-label="Aspect ratio">
+                  <button type="button" data-aspect="Square" role="radio" aria-checked="true">Square</button>
+                  <button type="button" data-aspect="Landscape" role="radio" aria-checked="false">Landscape</button>
+                  <button type="button" data-aspect="Portrait" role="radio" aria-checked="false">Portrait</button>
+                </div>
+                <p class="field-help">Each aspect ratio needs its own measured profile. Generate it in Preparation before it can be generated.</p>
+              </fieldset>
+              <fieldset id="duration-field">
+                <legend>Duration <output id="duration-value" for="duration-slider">6.1s</output></legend>
+                <input id="duration-slider" type="range" min="0" max="0" step="1" value="0" aria-label="Video duration in seconds" />
+                <p id="duration-note" class="field-help">Duration reflects this Mac's measured frame counts for the selected quality.</p>
+              </fieldset>
+              <details id="advanced">
+                <summary>Advanced</summary>
+                <p id="advanced-note" class="field-help">No custom overrides are available until they pass the same measured-profile gate. This protects output validity.</p>
+                <button id="reset-preset" class="text-button" type="button">Reset to Balanced preset</button>
+              </details>
             </div>
-            <p class="field-help">Each aspect ratio needs its own measured profile. Generate it in Preparation before it can be generated.</p>
-          </fieldset>
-          <fieldset id="duration-field">
-            <legend>Duration <output id="duration-value" for="duration-slider">6.1s</output></legend>
-            <input id="duration-slider" type="range" min="0" max="0" step="1" value="0" aria-label="Video duration in seconds" />
-            <p id="duration-note" class="field-help">Duration reflects this Mac's measured frame counts for the selected quality.</p>
-          </fieldset>
-          <details id="advanced">
-            <summary>Advanced</summary>
-            <p id="advanced-note" class="field-help">No custom overrides are available until they pass the same measured-profile gate. This protects output validity.</p>
-            <button id="reset-preset" class="text-button" type="button">Reset to Balanced preset</button>
-          </details>
+          </section>
           <label for="seed">Seed</label>
           <div class="seed-row"><input id="seed" type="number" min="0" max="2147483647" value="42" inputmode="numeric" /><button id="random-seed" type="button">Randomize</button></div>
           <div class="history-row" aria-label="Draft history"><button id="undo" type="button">Undo</button><button id="redo" type="button">Redo</button></div>
@@ -188,7 +208,7 @@
     <dialog id="onboarding" aria-labelledby="onboarding-title">
       <h2 id="onboarding-title">Before you create</h2>
       <p>SynVid runs generation locally. Models are stored in Application Support, can require substantial disk space and are never downloaded without an explicit confirmation.</p>
-      <p>The initial LTX profile is constrained to combinations measured on this Mac. No media has been rendered while this page is open.</p>
+      <p>The default Wan 2.2 profile is constrained to the one combination measured on this Mac. No media has been rendered while this page is open.</p>
       <form method="dialog"><button id="complete-onboarding" class="generate" value="continue" type="submit">Continue to SynVid</button></form>
     </dialog>
     <dialog id="required-model-dialog" aria-labelledby="required-model-title">

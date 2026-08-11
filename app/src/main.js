@@ -7,13 +7,15 @@ const convertFileSrc = window.__TAURI__.core.convertFileSrc;
 const DRAFT_KEY = "synvid.stage2.draft.v1";
 const ONBOARDING_KEY = "synvid.stage2.onboarding.v1";
 const MAX_HISTORY = 20;
+const DEFAULT_MODEL_ID = "wan2.2-ti2v-5b-mlx";
+const WAN_MODEL_ID = "wan2.2-ti2v-5b-mlx";
 const SETTINGS_HIDDEN_MODEL_IDS = new Set(["flux-dev", "flux-kontext-dev", "hunyuan15-480p-t2v", "hunyuan15-480p-i2v"]);
 const WALKTHROUGH_STEPS = [
   { target: "#preparation-tab", title: "1. Prepare local models", copy: "Start here to see the models available for local use. Download a model only after reviewing its size, license, and fixed revision, then generate a measured profile before composing." },
   { target: "#prompt", title: "2. Describe the result", copy: "Write the subject, movement, setting, and visual style. This text is kept on this Mac and becomes the instruction for your local model." },
   { target: "[data-mode=\"text\"]", title: "3. Choose how to begin", copy: "Use Text to video to create from your description. Choose Image to video when you want to animate a source image; the Choose source image button then opens the native file picker." },
   { target: "#model", title: "4. Pick a model", copy: "Choose the prepared model for the result you need. LTX Video makes video; FLUX.1-schnell makes a still image. Downloads and profile generation stay in Preparation." },
-  { target: "#recipe-buttons", title: "5. Select a measured recipe", copy: "Balanced is the recommended starting point. Recipes are available only when they have passed a local measurement on this Mac, so the app does not promise unsupported quality or speed." },
+  { target: "#model-settings", title: "5. Review model settings", copy: "Each model shows only settings that have been measured for it. Wan 2.2 uses one fixed validated shape, while LTX exposes its measured recipe, aspect, and duration choices." },
   { target: "#seed", title: "6. Control variations", copy: "Keep a seed to make a comparable variation, or use Randomize for a new one. Undo and Redo restore recent prompt, seed, and recipe changes." },
   { target: "#generate", title: "7. Generate locally", copy: "Generate starts the selected measured model. Progress and Cancel stay here while it runs. Model download and profile generation happen separately in Preparation." },
   { target: "#variant-list", title: "8. Review and refine", copy: "Each finished output appears in Variants. Select one to preview it, export it, or use Edit video, Add Voice, or image editing when those tools are available." },
@@ -22,7 +24,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, lastJobMessage: "", downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", frames: 49, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: DEFAULT_MODEL_ID, activeJob: null, lastJobMessage: "", downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Landscape", frames: 41, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -145,6 +147,7 @@ function renderCalibrationProgress(job) {
 }
 function selectedModel() { return state.models?.[state.modelId] || null; }
 function isImageModel() { return selectedModel()?.capabilities?.includes("image_generation") || false; }
+function isWanModel() { return state.modelId === WAN_MODEL_ID; }
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
 const QUALITY_TIERS = ["Draft", "Balanced", "High"];
 const ASPECT_RATIOS = ["Square", "Landscape", "Portrait"];
@@ -309,6 +312,11 @@ function renderDurationControl() {
     ? `${option.frames} frames at ${option.fps} fps, measured on this Mac.`
     : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Generate a profile before generating.`;
 }
+function renderModelSettings() {
+  const wan = isWanModel();
+  $("#generic-generation-controls").hidden = wan;
+  $("#wan-settings").hidden = !wan;
+}
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
 function hasUncalibratedRecipe(model) { return Object.values(model?.calibration || {}).some((info) => !info.measured); }
 function updateControls() {
@@ -331,6 +339,7 @@ function updateControls() {
   }
   renderGenerationProgress(state.activeJob);
   renderCalibrationProgress(state.activeJob);
+  renderModelSettings();
   renderRecipeButtons();
   renderAspectButtons();
   $("#profile").textContent = profile ? profileLabel(profile) : "Not available";
@@ -447,11 +456,11 @@ async function maybeShowRequiredModelSetup() {
   requiredModelSetupChecked = true;
   try {
     const response = await invoke("model_catalog");
-    requiredModel = (response.models || []).find((model) => model.model_id === "ltx-video") || null;
+    requiredModel = (response.models || []).find((model) => model.model_id === DEFAULT_MODEL_ID) || null;
     if (!requiredModel) return;
     $("#required-model-copy").textContent = requiredModel.installed
-      ? "LTX Video is installed, but this Mac has no valid measured profile yet. Generate one on this Mac before generating."
-      : "LTX Video is required before SynVid can create video on this Mac.";
+      ? `${requiredModel.display_name} is installed, but this Mac has no valid measured profile yet. Generate one on this Mac before generating.`
+      : `${requiredModel.display_name} is the default video model and is required before SynVid can create video on this Mac.`;
     $("#required-model-facts").textContent = "Model: " + requiredModel.display_name + " · " + requiredModel.expected_size_gib + " GB expected · " + requiredModel.license + " · revision " + requiredModel.revision;
     $("#download-required-model").hidden = Boolean(requiredModel.installed);
     const calibration = requiredModel.calibration?.[state.recipe] || requiredModel.calibration?.Balanced;
@@ -699,7 +708,14 @@ $("#choose-image").addEventListener("click", async () => {
   try { const selected = await invoke("choose_source_image"); state.sourceImageId = selected.sourceImageId; $("#source-image-status").textContent = state.sourceImageId ? "Source image selected and copied into SynVid storage." : "No source image selected."; }
   catch (reason) { setError(String(reason)); }
 });
-$("#model").addEventListener("change", () => { state.modelId = $("#model").value; state.frames = 49; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
+$("#model").addEventListener("change", () => {
+  state.modelId = $("#model").value;
+  state.frames = isWanModel() ? 41 : 49;
+  state.aspect = isWanModel() ? "Landscape" : "Square";
+  setAspect(state.aspect);
+  setRecipe("Balanced");
+  updateControls();
+});
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;

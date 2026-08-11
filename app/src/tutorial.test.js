@@ -8,7 +8,7 @@ const markup = await readFile(new URL("./index.html", import.meta.url), "utf8");
 test("walkthrough explains and highlights the primary creation flow", () => {
   assert.match(markup, /id="start-walkthrough"/);
   assert.match(markup, /id="walkthrough"/);
-  for (const control of ["#prompt", "#model", "#recipe-buttons", "#seed", "#generate", "#variant-list", "#library-button"]) {
+  for (const control of ["#prompt", "#model", "#model-settings", "#seed", "#generate", "#variant-list", "#library-button"]) {
     assert.ok(source.includes(control));
   }
   assert.match(source, /walkthrough-target/);
@@ -27,7 +27,7 @@ test("missing required video setup opens an explicit download dialog", () => {
   assert.match(markup, /id="download-required-model"/);
   assert.match(markup, /id="generate-required-profile"/);
   assert.match(source, /maybeShowRequiredModelSetup/);
-  assert.match(source, /model_id === "ltx-video"/);
+  assert.match(source, /model_id === DEFAULT_MODEL_ID/);
   assert.match(markup, /Download and validate/);
 });
 
@@ -53,6 +53,17 @@ test("video controls follow each model's measured recipe shapes", () => {
   assert.match(source, /durationOptionsFor\(model, quality, aspect/);
   assert.match(source, /button\.disabled = !enabled/);
   assert.match(source, /options\.length === 1/);
+});
+
+test("Wan 2.2 is the default and uses its fixed measured settings surface", () => {
+  assert.match(markup, /<option value="wan2\.2-ti2v-5b-mlx">Wan 2\.2 TI2V 5B<\/option>/);
+  assert.match(source, /DEFAULT_MODEL_ID = "wan2\.2-ti2v-5b-mlx"/);
+  assert.match(source, /modelId: DEFAULT_MODEL_ID/);
+  assert.doesNotMatch(markup, /Wan 2\.2[^<]*experimental/i);
+  assert.match(markup, /id="wan-settings"/);
+  assert.match(markup, /1280 × 704/);
+  assert.match(markup, /<dt>Frames<\/dt><dd>41<\/dd>/);
+  assert.doesNotMatch(source, /LTX Video is required before SynVid can create video/);
 });
 
 test("library deletion reports its result inside the open dialog", () => {
