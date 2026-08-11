@@ -9,7 +9,7 @@ source_worker="$root_dir/app/src-tauri/resources/worker"
 app_bundle="$root_dir/app/src-tauri/target/release/bundle/macos/SynVid.app"
 destination_worker="$app_bundle/Contents/Resources/resources/worker"
 artifact_dir="$root_dir/dist"
-dmg_path="$artifact_dir/SynVid-0.1.2-unsigned.dmg"
+dmg_path="$artifact_dir/SynVid-0.2.0-unsigned.dmg"
 stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/synvid-dmg.XXXXXX")
 cleanup() {
     rm -rf "$stage_dir"
