@@ -10,12 +10,12 @@ set -eu
 # Usage:
 #   xcrun notarytool store-credentials PROFILE_NAME \
 #       --apple-id you@example.com --team-id TEAMID --password APP_SPECIFIC_PW
-#   ./scripts/notarize-release-dmg.sh [path/to/SynVid-0.2.0-signed-unnotarized.dmg]
+#   ./scripts/notarize-release-dmg.sh [path/to/AI-Video Synthesizer-0.2.0-signed-unnotarized.dmg]
 #   (defaults to the "synvid-notary" keychain profile; override with
 #   SYNVID_NOTARY_PROFILE=OTHER_PROFILE)
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source_dmg=${1:-"$root_dir/dist/release/SynVid-0.2.0-signed-unnotarized.dmg"}
+source_dmg=${1:-"$root_dir/dist/release/AI-Video Synthesizer-0.2.0-signed-unnotarized.dmg"}
 notary_profile=${SYNVID_NOTARY_PROFILE:-synvid-notary}
 
 test -f "$source_dmg"
@@ -57,7 +57,7 @@ spctl -a -t open --context context:primary-signing-identifier -v "$notarized_dmg
 
 echo "mounting DMG to verify the stapled .app passes Gatekeeper execution assessment..."
 hdiutil attach "$notarized_dmg" -mountpoint "$mount_point" -nobrowse -quiet
-app_path="$mount_point/SynVid.app"
+app_path="$mount_point/AI-Video Synthesizer.app"
 test -d "$app_path"
 spctl -a -t exec -vv "$app_path"
 

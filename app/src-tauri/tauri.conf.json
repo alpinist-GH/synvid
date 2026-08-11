@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SynVid",
+  "productName": "AI-Video Synthesizer",
   "version": "0.2.0",
   "identifier": "com.synvid.desktop",
   "build": { "frontendDist": "../src" },
