@@ -61,4 +61,11 @@ app_path="$mount_point/AI-Video Synthesizer.app"
 test -d "$app_path"
 spctl -a -t exec -vv "$app_path"
 
+# Keep the signed-unnotarized input available if any notarization or
+# validation step fails so the operation can be retried. Once the final DMG
+# has passed every check above, it is the only release artifact to retain.
+if [ "$source_dmg" != "$notarized_dmg" ]; then
+    rm -f "$source_dmg"
+fi
+
 printf '%s\n' "notarized and stapled DMG: $notarized_dmg"
