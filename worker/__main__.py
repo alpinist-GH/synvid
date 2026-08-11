@@ -52,6 +52,7 @@ from .providers.ltx import LtxProvider
 from .providers.flux import FluxSchnellProvider
 from .providers.qwen_image_edit import QwenImageEditProvider
 from .providers.hunyuan import HunyuanVideo15Provider
+from .providers.wan_mlx import WanMlxProvider
 from .models import REGISTRY
 from .resources import Estimate
 from .service import GenerationError, GenerationService
@@ -105,21 +106,27 @@ def _service() -> GenerationService:
         paths.models / "hunyuan15-480p-i2v" / "measured-profile.json",
         model_id="hunyuan15-480p-i2v",
     )
+    wan_mlx = WanMlxProvider(
+        paths.models / "wan2.2-ti2v-5b-mlx" / "snapshot",
+        paths.models / "wan2.2-ti2v-5b-mlx" / "measured-profile.json",
+    )
     estimate = _measured_estimate(paths.models / "ltx-video" / "measured-profile.json")
     flux_estimate = _measured_estimate(paths.models / "flux-schnell" / "measured-profile.json")
     qwen_image_edit_estimate = _measured_estimate(paths.models / "qwen-image-edit" / "measured-profile.json")
     hunyuan_t2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-t2v" / "measured-profile.json", "hunyuan15-480p-t2v")
     hunyuan_i2v_estimate = _hunyuan_estimate(paths.models / "hunyuan15-480p-i2v" / "measured-profile.json", "hunyuan15-480p-i2v")
+    wan_mlx_estimate = _measured_estimate(paths.models / "wan2.2-ti2v-5b-mlx" / "measured-profile.json")
     return GenerationService(
         paths,
         ltx,
         estimate,
-        additional_providers=(flux, qwen_image_edit, hunyuan_t2v, hunyuan_i2v),
+        additional_providers=(flux, qwen_image_edit, hunyuan_t2v, hunyuan_i2v, wan_mlx),
         estimates={
             "flux-schnell": flux_estimate,
             "qwen-image-edit": qwen_image_edit_estimate,
             "hunyuan15-480p-t2v": hunyuan_t2v_estimate,
             "hunyuan15-480p-i2v": hunyuan_i2v_estimate,
+            "wan2.2-ti2v-5b-mlx": wan_mlx_estimate,
         },
         narrator=KokoroNarrator(paths.models / "kokoro-onnx" / "snapshot"),
     )

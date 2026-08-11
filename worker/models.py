@@ -79,6 +79,32 @@ _HUNYUAN_DIFFUSERS_FILES = (
 
 _HUNYUAN_LICENSE = "Tencent Hunyuan Community License Agreement (territory-restricted)"
 
+_WAN22_TI2V_5B_MLX_LICENSE = (
+    "Apache-2.0 (Wan-AI/Wan2.2-TI2V-5B weights); MLX conversion/generation code is a "
+    "vendored, patched subset of Blaizzy/mlx-video (MIT) — see worker/vendor/mlx_video_wan2/NOTICE.md"
+)
+
+# Unlike every other entry, these are not the upstream repository's own file
+# names: they are produced by a local, pinned MLX conversion
+# (worker/vendor/mlx_video_wan2) of the upstream .safetensors/.pth weights.
+# The raw .pth files are fetched to an ephemeral, non-app-owned location,
+# LFS-checksum-verified, converted, and discarded — they are never written
+# below SynVid's model root, since model_security.py forbids pickle-based
+# serialization (.pth/.pt/.bin/.pkl) anywhere in the app-owned tree.
+_WAN_MLX_CONVERTED_FILES = (
+    "config.json", "model.safetensors", "t5_encoder.safetensors", "vae.safetensors",
+    "tokenizer/special_tokens_map.json", "tokenizer/spiece.model",
+    "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json",
+)
+
+_SYNVID_CONVERTED = (
+    "SynVid-computed SHA-256 of files produced by a pinned local MLX conversion "
+    "(worker/vendor/mlx_video_wan2, commit 87db56a51758fefb748a359b90a5283bb8ba4837) of "
+    "upstream Hugging Face LFS-verified source weights at the pinned revision below; "
+    "the source .pth files are verified against upstream LFS metadata during install "
+    "and never persisted in app storage"
+)
+
 # These models failed the local watchability gate. Keep their IDs only so an
 # existing SynVid-owned install can be displayed as removal-only cleanup; they
 # must not be selectable or offered for a new download.
@@ -101,6 +127,15 @@ REGISTRY = {
     "qwen-story-planner": ModelSpec("qwen-story-planner", "Qwen Story Planner", "Optional local draft-scene assistant; currently unavailable because its structured-output quality gate did not pass.", frozenset(), "shareable", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "Apache-2.0", 2.9, False, _TRANSFORMERS_FILES, _HF_LFS),
     "hunyuan15-480p-t2v": ModelSpec("hunyuan15-480p-t2v", "HunyuanVideo 1.5 480p T2V", "Experimental 8.3B text-to-video provider with a measured MPS Balanced profile on this Mac (848x480, 25 frames/24fps, 20 steps, ~34.3 GiB peak MPS allocation); longer frame counts (61+) thrash this Mac's unified memory and remain unmeasured. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v", "286be7ce72277246578a3e3cc2487e95ddae5bcf", _HUNYUAN_LICENSE, 53.4, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"text"})),
     "hunyuan15-480p-i2v": ModelSpec("hunyuan15-480p-i2v", "HunyuanVideo 1.5 480p I2V", "Experimental 8.3B image-to-video provider; requires a real MPS memory, cancellation, and watchability gate. The Tencent license excludes the EU, UK, and South Korea.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v", "5a700ee883ff4c1b3d887ec4188755a7a5e2f698", _HUNYUAN_LICENSE, 54.2, True, _HUNYUAN_DIFFUSERS_FILES, _HF_LFS, frozenset({"image"})),
+    # A distinct runtime path from the retired "wan2.2-ti2v-5b" Diffusers/MPS
+    # attempt (RETIRED_MODELS below), not a replacement for that entry: this
+    # one runs the same upstream weights through an Apple-native MLX port
+    # instead of Diffusers' WanPipeline. Validated once on this Mac
+    # (1280x704/41 frames/40 steps, directly-inspected watchable output,
+    # ~30 GiB peak system memory); not yet run through the same multi-prompt
+    # quality gate that failed the Diffusers path. See
+    # docs/measurements/wan2.2-ti2v-5b-mlx-gate-2026-08-10.md.
+    "wan2.2-ti2v-5b-mlx": ModelSpec("wan2.2-ti2v-5b-mlx", "Wan 2.2 TI2V 5B (MLX)", "Experimental 5B text-to-video provider via an Apple-native MLX port, distinct from the retired Diffusers/MPS Wan2.2 TI2V-5B pipeline. Validated once on this Mac; quality is provisionally, not fully, approved.", frozenset({Capability.VIDEO_GENERATION}), "personal-research", "Wan-AI/Wan2.2-TI2V-5B", "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", _WAN22_TI2V_5B_MLX_LICENSE, 23.0, True, _WAN_MLX_CONVERTED_FILES, _SYNVID_CONVERTED, frozenset({"text"})),
 }
 
 

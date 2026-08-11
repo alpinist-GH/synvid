@@ -239,7 +239,7 @@ class GenerationService:
         except AttributeError:
             profile = None
         except (KeyError, ValueError, OSError, RuntimeError) as error:
-            raise GenerationError("requested recipe is not measured for LTX") from error
+            raise GenerationError("requested recipe is not measured for the selected model") from error
         values = {
             "capability": Capability.VIDEO_GENERATION,
             "prompt": prompt,
@@ -467,11 +467,23 @@ class GenerationService:
             raise GenerationError("selected model is not managed by SynVid")
         spec = REGISTRY[model_id]
         job_ready = __import__("threading").Event(); job: Job | None = None
-        def runner(_progress, cancelled) -> None:
-            job_ready.wait(); assert job is not None
-            with self.reservations.hold(Estimate(int(spec.expected_size_gib * 1024**3), True)):
-                result = download_model(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
-                self._job_results[job.job_id] = {"model_install": result}
+        if model_id == "wan2.2-ti2v-5b-mlx":
+            # This model's app-owned snapshot is produced by a local MLX
+            # conversion, not a direct copy of the upstream repository's own
+            # files (see model_install_wan_mlx.py) — the generic download_model
+            # path cannot fetch files that only exist after conversion.
+            from .model_install_wan_mlx import PEAK_INSTALL_BYTES, install_wan_mlx_snapshot
+            def runner(_progress, cancelled) -> None:
+                job_ready.wait(); assert job is not None
+                with self.reservations.hold(Estimate(PEAK_INSTALL_BYTES, True)):
+                    result = install_wan_mlx_snapshot(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
+                    self._job_results[job.job_id] = {"model_install": result}
+        else:
+            def runner(_progress, cancelled) -> None:
+                job_ready.wait(); assert job is not None
+                with self.reservations.hold(Estimate(int(spec.expected_size_gib * 1024**3), True)):
+                    result = download_model(self.paths, spec, lambda fraction, text: self._on_progress(job, fraction, text, on_progress), cancelled)
+                    self._job_results[job.job_id] = {"model_install": result}
         job = self.jobs.submit(runner, operation="model_download"); job_ready.set(); self._watch_terminal(job, on_terminal)
         return job
 
