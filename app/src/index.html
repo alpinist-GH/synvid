@@ -125,7 +125,7 @@
               <button type="button" data-recipe="Balanced" role="radio" aria-checked="true">Balanced</button>
               <button type="button" data-recipe="High" role="radio" aria-checked="false">High</button>
             </div>
-            <p id="recipe-note" class="field-help">Balanced is the only measured LTX recipe currently available.</p>
+            <p id="recipe-note" class="field-help">Draft, Balanced, and High are measured across a range of durations on this Mac.</p>
           </fieldset>
           <fieldset>
             <legend>Aspect ratio</legend>
@@ -135,6 +135,11 @@
               <button type="button" data-aspect="Portrait" role="radio" aria-checked="false">Portrait</button>
             </div>
             <p class="field-help">Each aspect ratio needs its own measured profile. Calibrate it in Settings before it can be generated.</p>
+          </fieldset>
+          <fieldset id="duration-field">
+            <legend>Duration <output id="duration-value" for="duration-slider">6.1s</output></legend>
+            <input id="duration-slider" type="range" min="0" max="0" step="1" value="0" aria-label="Video duration in seconds" />
+            <p id="duration-note" class="field-help">Duration reflects this Mac's measured frame counts for the selected quality.</p>
           </fieldset>
           <details id="advanced">
             <summary>Advanced</summary>

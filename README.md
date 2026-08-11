@@ -229,7 +229,7 @@ that distinction behind a plausible-looking control.
 
 | Model | Capability | License | Size | Status on this Mac |
 |---|---|---|---|---|
-| **LTX Video** | text/image → video, video editing | LTX-Video Open Weights | 24 GB | ✅ Measured: Draft 256×256/9 frames/8 fps/4 steps (1.125s); Balanced 256×256/49 frames/8 fps/8 steps (6.125s); High 256×256/9 frames/8 fps/12 steps |
+| **LTX Video** | text/image → video, video editing | LTX-Video Open Weights | 24 GB | ✅ Measured: Draft/Balanced/High at 256×256/8 fps, each across a duration ladder from 9 to 121 frames (1.1s–15.1s); BalancedLandscape 512×288/49 frames fixed |
 | **FLUX.1-schnell** | text → image | Apache-2.0 | 54 GB | ✅ Measured: 512×512, 4 steps, bf16 — 48.5s, ~33.7 GB peak MPS |
 | **Qwen Image Edit** | image editing | Apache-2.0 | 57.7 GB | ✅ Measured: 512×512, 4 steps, bf16 — 621s first run, ~57.7 GB peak MPS |
 | **HunyuanVideo 1.5 480p** (T2V and I2V) | text/image → video | Tencent Hunyuan Community License — **excludes the EU, UK, and South Korea** | 53.4 / 54.2 GB | ⚠️ **Never measured on this Mac** — an unvalidated placeholder test profile only (848×480, 121 frames, 24 fps, 50 steps) |
@@ -249,12 +249,19 @@ Settings only as removal-only cleanup.
 
 ## Generation, quality, and export
 
-**Recipes.** Draft/Balanced/High are the only generation presets, and each
-one is a real profile measured on this Mac (resolution, frame count, fps,
-step count, memory) — there are no free-form resolution/step/duration
-controls. A model with no measured profile cannot generate at all; it shows
-"experimental test profile" rather than silently falling back to guessed
-settings.
+**Recipes.** Draft/Balanced/High are the only generation-quality presets, and
+each one is a real profile measured on this Mac (resolution, fps, step
+count, memory) — there are no free-form resolution/step controls. A model
+with no measured profile cannot generate at all; it shows "experimental
+test profile" rather than silently falling back to guessed settings.
+
+**Duration.** For LTX Video at Square aspect, duration is a separate control
+from quality: a slider maps to a ladder of measured frame counts (9, 17, 25,
+… 121 frames at 8 fps — 1.1s to 15.1s) for each of Draft/Balanced/High, so
+changing quality preserves the selected duration where a matching measured
+point exists (see `docs/measurements/ltx-duration-ladder-gate-2026-08-10.md`).
+Landscape and Portrait remain single fixed-duration profiles; the UI
+disables the duration slider and explains why when either is selected.
 
 **Native vs. interpolated FPS.** Every clip plays at its model's native fps
 — LTX runs at 8 fps native, for example. A frame-interpolation feasibility

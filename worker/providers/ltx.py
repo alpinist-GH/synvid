@@ -23,18 +23,43 @@ class LtxProviderError(RuntimeError):
     pass
 
 
-# Quality-approved recipe shapes (docs/measurements/stage7-story-render-compose-2026-08-09.md
-# and earlier LTX gates). Only resolution/frames/fps/steps/guidance/dtype are
-# trusted here; calibrate() measures the memory/disk numbers fresh.
+# Quality-approved recipe shapes (docs/measurements/stage7-story-render-compose-2026-08-09.md,
+# docs/measurements/ltx-duration-ladder-gate-2026-08-10.md, and earlier LTX
+# gates). Only resolution/frames/fps/steps/guidance/dtype are trusted here;
+# calibrate() measures the memory/disk numbers fresh.
 #
-# The *Landscape/*Portrait entries are shape-sanity-checked only (32px-aligned,
-# exact 16:9/9:16), not yet visually quality-reviewed on real hardware like the
-# three square recipes above. They become usable once a real calibrate() run
-# on a real Mac succeeds and their output has been reviewed.
+# Square duration ladder: each quality tier (steps) is offered at every frame
+# count in DURATION_LADDER_FRAMES so the UI can expose a Duration control
+# independent of the Draft/Balanced/High quality control. Frame counts follow
+# LTX's 8k+1 latent alignment. The bare quality name ("Draft"/"Balanced"/
+# "High") stays pinned to each tier's original single-duration shape so
+# existing measured-profile.json entries and any external state stay valid;
+# every other frame count is named "{Quality}D{frames}".
+DURATION_LADDER_FRAMES: tuple[int, ...] = (9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121)
+
+# quality -> (steps, default_frames)
+_SQUARE_QUALITIES: dict[str, tuple[int, int]] = {"Draft": (4, 9), "Balanced": (8, 49), "High": (12, 9)}
+
+
+def _square_duration_recipes() -> dict[str, dict[str, object]]:
+    recipes: dict[str, dict[str, object]] = {}
+    for quality, (steps, default_frames) in _SQUARE_QUALITIES.items():
+        for frames in DURATION_LADDER_FRAMES:
+            name = quality if frames == default_frames else f"{quality}D{frames}"
+            recipes[name] = {
+                "width": 256, "height": 256, "frames": frames, "fps": 8,
+                "steps": steps, "guidance_scale": 3.0, "dtype": "float16",
+            }
+    return recipes
+
+
+# The *Landscape/*Portrait entries remain single-duration only: shape-sanity-
+# checked (32px-aligned, exact 16:9/9:16), not yet extended with a duration
+# ladder like the square recipes above. They become ladder-eligible once a
+# real calibrate() run on a real Mac succeeds and output has been reviewed
+# across that aspect's frame counts too.
 CALIBRATION_RECIPES: dict[str, dict[str, object]] = {
-    "Draft": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
-    "Balanced": {"width": 256, "height": 256, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
-    "High": {"width": 256, "height": 256, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},
+    **_square_duration_recipes(),
     "DraftLandscape": {"width": 512, "height": 288, "frames": 9, "fps": 8, "steps": 4, "guidance_scale": 3.0, "dtype": "float16"},
     "BalancedLandscape": {"width": 512, "height": 288, "frames": 49, "fps": 8, "steps": 8, "guidance_scale": 3.0, "dtype": "float16"},
     "HighLandscape": {"width": 512, "height": 288, "frames": 9, "fps": 8, "steps": 12, "guidance_scale": 3.0, "dtype": "float16"},

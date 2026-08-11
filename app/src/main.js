@@ -21,7 +21,7 @@ const WALKTHROUGH_STEPS = [
 // The evaluated compact planner failed the Stage 7 adversarial JSON gate.
 // Do not expose an optional model feature merely because its files are present.
 const STORY_PLANNER_AVAILABLE = false;
-const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
+const state = { recipes: null, models: null, modelId: "ltx-video", activeJob: null, downloadModelJobId: null, calibrationJobId: null, connected: false, quality: "Balanced", aspect: "Square", frames: 49, recipe: "Balanced", mode: "text", sourceImageId: null, variants: [], selectedVariant: null, history: [], historyIndex: -1 };
 let activeStory = null; let activeSceneId = null; let draftProposals = [];
 let walkthroughIndex = 0;
 let requiredModelSetupChecked = false;
@@ -144,8 +144,25 @@ function isImageModel() { return selectedModel()?.capabilities?.includes("image_
 function profileLabel(profile) { return `${profile.width} × ${profile.height} · ${profile.frames ? `${profile.frames} frames · ` : ""}${profile.steps} steps`; }
 const QUALITY_TIERS = ["Draft", "Balanced", "High"];
 const ASPECT_RATIOS = ["Square", "Landscape", "Portrait"];
-function composeRecipeName(quality, aspect) { return aspect === "Square" ? quality : `${quality}${aspect}`; }
-function draft() { return { prompt: $("#prompt").value, seed: $("#seed").value, recipe: state.quality, aspect: state.aspect }; }
+// Square recipes form a duration ladder per quality tier ("Balanced",
+// "BalancedD17", "BalancedD25", …); Landscape/Portrait stay single-duration.
+function durationOptionsFor(model, quality) {
+  if (!model?.calibration) return [];
+  const pattern = new RegExp(`^${quality}(D(\\d+))?$`);
+  return Object.entries(model.calibration)
+    .filter(([name]) => pattern.test(name))
+    .map(([name, info]) => ({ name, frames: info.reference?.frames || 0, fps: info.reference?.fps || 8, measured: Boolean(info.measured) }))
+    .filter((option) => option.frames > 0)
+    .sort((a, b) => a.frames - b.frames);
+}
+function composeRecipeName(quality, aspect, frames) {
+  if (aspect !== "Square") return `${quality}${aspect}`;
+  const options = durationOptionsFor(selectedModel(), quality);
+  if (!options.length) return quality;
+  const match = options.find((option) => option.frames === frames) || options.find((option) => option.name === quality) || options[0];
+  return match.name;
+}
+function draft() { return { prompt: $("#prompt").value, seed: $("#seed").value, recipe: state.quality, aspect: state.aspect, frames: state.frames }; }
 function saveDraft() { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft())); }
 function renderHistory() { $("#undo").disabled = state.historyIndex <= 0; $("#redo").disabled = state.historyIndex >= state.history.length - 1; }
 function saveHistory() {
@@ -162,6 +179,7 @@ function applyDraft(raw) {
   $("#prompt").value = typeof value.prompt === "string" ? value.prompt : "";
   $("#seed").value = /^\d+$/.test(String(value.seed)) ? value.seed : "42";
   state.aspect = ASPECT_RATIOS.includes(value.aspect) ? value.aspect : "Square";
+  state.frames = Number.isInteger(value.frames) && value.frames > 0 ? value.frames : 49;
   for (const button of document.querySelectorAll("[data-aspect]")) button.setAttribute("aria-checked", String(button.dataset.aspect === state.aspect));
   setRecipe(QUALITY_TIERS.includes(value.recipe) ? value.recipe : "Balanced");
 }
@@ -171,15 +189,24 @@ function restoreDraft() {
 }
 function setRecipe(quality) {
   state.quality = quality;
-  state.recipe = composeRecipeName(state.quality, state.aspect);
+  state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
   for (const button of document.querySelectorAll("[data-recipe]")) button.setAttribute("aria-checked", String(button.dataset.recipe === quality));
   renderRecipeNote();
+  renderDurationControl();
 }
 function setAspect(aspect) {
   state.aspect = aspect;
-  state.recipe = composeRecipeName(state.quality, state.aspect);
+  state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
   for (const button of document.querySelectorAll("[data-aspect]")) button.setAttribute("aria-checked", String(button.dataset.aspect === aspect));
   renderRecipeNote();
+  renderDurationControl();
+}
+function setDuration(frames) {
+  if (state.aspect !== "Square") return;
+  state.frames = frames;
+  state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
+  renderRecipeNote();
+  renderDurationControl();
 }
 function renderRecipeNote() {
   const profile = activeProfile();
@@ -187,6 +214,33 @@ function renderRecipeNote() {
     ? `${state.recipe}: ${profile.steps} steps at ${profile.width} × ${profile.height}; measured on this Mac.`
     : `${state.recipe} has not been measured on this Mac.`;
   $("#advanced-note").textContent = "Custom overrides are unavailable: only the measured recipe map may be submitted.";
+}
+function renderDurationControl() {
+  const field = $("#duration-field"); const slider = $("#duration-slider"); const valueOut = $("#duration-value"); const note = $("#duration-note");
+  if (isImageModel()) { field.hidden = true; return; }
+  field.hidden = false;
+  if (state.aspect !== "Square") {
+    slider.disabled = true; slider.min = "0"; slider.max = "0"; slider.value = "0";
+    valueOut.textContent = "Fixed";
+    note.textContent = `${state.aspect} videos use one fixed measured duration on this Mac. Switch to Square for adjustable duration.`;
+    return;
+  }
+  const options = durationOptionsFor(selectedModel(), state.quality);
+  if (!options.length) {
+    slider.disabled = true; slider.min = "0"; slider.max = "0"; slider.value = "0";
+    valueOut.textContent = "—";
+    note.textContent = "Duration options appear once the model catalog loads.";
+    return;
+  }
+  let index = options.findIndex((option) => option.frames === state.frames);
+  if (index === -1) index = options.findIndex((option) => option.name === state.quality);
+  if (index === -1) index = 0;
+  slider.disabled = false; slider.min = "0"; slider.max = String(options.length - 1); slider.step = "1"; slider.value = String(index);
+  const option = options[index];
+  valueOut.textContent = `${(option.frames / option.fps).toFixed(1)}s`;
+  note.textContent = option.measured
+    ? `${option.frames} frames at ${option.fps} fps, measured on this Mac.`
+    : `${option.frames} frames at ${option.fps} fps — not yet measured on this Mac. Open Settings to calibrate it before generating.`;
 }
 function activeProfile() { const model = selectedModel(); return isImageModel() ? model?.measured_image_profile : model?.measured_recipes?.[state.recipe] || null; }
 function hasUncalibratedRecipe(model) { return Object.values(model?.calibration || {}).some((info) => !info.measured); }
@@ -294,11 +348,12 @@ function recordTerminal(events) {
 async function refresh() {
   try {
     const status = await invoke("worker_status"); state.connected = status.connected; state.models = status.availableModels; state.recipes = status.measuredRecipes; state.activeJob = status.activeJob;
+    state.recipe = composeRecipeName(state.quality, state.aspect, state.frames);
     if (state.activeJob?.operation === "model_download") state.downloadModelJobId = state.activeJob.job_id || state.activeJob.jobId;
     if (state.activeJob?.operation === "calibrate") state.calibrationJobId = state.activeJob.job_id || state.activeJob.jobId;
     connection.textContent = status.connected ? `Ready · worker protocol v${status.protocolVersion}` : status.error || "Worker unavailable";
     if (state.activeJob) jobStatus.textContent = `${state.activeJob.status_text || state.activeJob.statusText || "Generating"} · ${Math.round((state.activeJob.progress || 0) * 100)}%`;
-    recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); renderCalibrationProgress(state.activeJob); void maybeShowRequiredModelSetup();
+    recordTerminal(status.events || []); updateControls(); renderModelDownloadProgress(state.activeJob); renderCalibrationProgress(state.activeJob); renderRecipeNote(); renderDurationControl(); void maybeShowRequiredModelSetup();
   } catch { state.connected = false; connection.textContent = "Worker unavailable"; updateControls(); }
 }
 async function maybeShowRequiredModelSetup() {
@@ -519,6 +574,12 @@ $("#prompt").addEventListener("input", saveHistory); $("#seed").addEventListener
 $("#random-seed").addEventListener("click", () => { $("#seed").value = String(Math.floor(Math.random() * 2_147_483_647)); saveHistory(); });
 for (const button of document.querySelectorAll("[data-recipe]")) button.addEventListener("click", () => { setRecipe(button.dataset.recipe); saveHistory(); });
 for (const button of document.querySelectorAll("[data-aspect]")) button.addEventListener("click", () => { setAspect(button.dataset.aspect); saveHistory(); });
+$("#duration-slider").addEventListener("input", () => {
+  const options = durationOptionsFor(selectedModel(), state.quality);
+  const option = options[Number($("#duration-slider").value)];
+  if (option) setDuration(option.frames);
+});
+$("#duration-slider").addEventListener("change", () => saveHistory());
 for (const button of document.querySelectorAll("[data-mode]")) button.addEventListener("click", () => {
   if (isImageModel() || button.disabled) return;
   state.mode = button.dataset.mode;
@@ -529,7 +590,7 @@ $("#choose-image").addEventListener("click", async () => {
   try { const selected = await invoke("choose_source_image"); state.sourceImageId = selected.sourceImageId; $("#source-image-status").textContent = state.sourceImageId ? "Source image selected and copied into SynVid storage." : "No source image selected."; }
   catch (reason) { setError(String(reason)); }
 });
-$("#model").addEventListener("change", () => { state.modelId = $("#model").value; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
+$("#model").addEventListener("change", () => { state.modelId = $("#model").value; state.frames = 49; setAspect("Square"); setRecipe("Balanced"); updateControls(); });
 for (const button of document.querySelectorAll("[data-export]")) button.addEventListener("click", async () => {
   if (!state.selectedVariant) return;
   button.disabled = true;
@@ -575,7 +636,7 @@ $("#generate-voice").addEventListener("click", async () => {
     jobStatus.textContent = "Generating narration…"; updateControls();
   } catch (reason) { setError(String(reason)); }
 });
-$("#reset-preset").addEventListener("click", () => { setAspect("Square"); setRecipe("Balanced"); saveHistory(); });
+$("#reset-preset").addEventListener("click", () => { state.frames = 49; setAspect("Square"); setRecipe("Balanced"); saveHistory(); });
 setupModelButton.addEventListener("click", showSettings);
 $("#undo").addEventListener("click", () => { if (state.historyIndex > 0) { state.historyIndex--; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
 $("#redo").addEventListener("click", () => { if (state.historyIndex < state.history.length - 1) { state.historyIndex++; applyDraft(state.history[state.historyIndex]); renderHistory(); saveDraft(); } });
