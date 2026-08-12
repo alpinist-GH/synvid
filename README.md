@@ -134,6 +134,49 @@ Three scripts, in increasing order of what they produce:
   This step uploads the DMG to Apple and is never run automatically by any
   other script — see below.
 
+### Mac App Store / TestFlight (parallel path)
+
+The default v1 distribution is the signed/notarized DMG above. A separate,
+parallel path builds a sandboxed App Store package instead, for TestFlight
+and eventual App Store review:
+
+- **`scripts/build-appstore-release.sh`** — builds the same worker/frontend,
+  then signs every nested binary and the outer `.app` with an **Apple
+  Distribution** certificate and `app/src-tauri/entitlements/appstore.entitlements`
+  (adds `com.apple.security.app-sandbox` on top of the same hardened-runtime
+  exceptions the DMG build needs for the bundled Python/PyTorch/MLX/FFmpeg
+  payload), embeds a Mac App Store provisioning profile, and wraps the result
+  in a signed installer `.pkg` via `productbuild`. Requires an Apple
+  Distribution certificate, a "3rd Party Mac Developer Installer" certificate,
+  and a Mac App Store provisioning profile for `com.synvid.desktop` (create
+  the App ID and profile at developer.apple.com first):
+
+  ```sh
+  SYNVID_APPSTORE_DISTRIBUTION_IDENTITY="Apple Distribution: Your Name (TEAMID)" \
+  SYNVID_APPSTORE_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Your Name (TEAMID)" \
+  SYNVID_APPSTORE_PROVISIONING_PROFILE="$HOME/Library/MobileDevice/Provisioning Profiles/XXXX.provisionprofile" \
+    ./scripts/build-appstore-release.sh
+  ```
+
+- **`scripts/upload-appstore-build.sh`** — the explicitly authorized step
+  that validates and uploads the signed `.pkg` to App Store Connect using an
+  App Store Connect API key. This step publishes a build into your app's
+  TestFlight pipeline and is never run automatically by any other script:
+
+  ```sh
+  SYNVID_ASC_KEY_ID=XXXXXXXXXX \
+  SYNVID_ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  SYNVID_ASC_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8" \
+    ./scripts/upload-appstore-build.sh
+  ```
+
+App Sandbox's redirection of `~/Library/Application Support/SynVid` into the
+app's sandbox container is expected to work transparently for the existing
+model/output storage paths, but this is a design expectation, not yet an
+empirically measured claim — treat the first App Store build's model
+download/generation/export flow as needing the same kind of real-device
+smoke test the DMG build got before trusting it.
+
 ## Installing, updating, and uninstalling
 
 Drag the built `.app` to `/Applications` (or run it from wherever you put
