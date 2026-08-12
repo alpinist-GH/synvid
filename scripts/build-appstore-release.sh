@@ -94,13 +94,33 @@ done
 
 echo "signing outer app bundle..."
 find "$app_bundle" -type f -name .DS_Store -delete
+# The outer app's signature must declare com.apple.application-identifier and
+# com.apple.developer.team-identifier matching the embedded provisioning
+# profile, or App Store Connect accepts the upload but silently marks it
+# unusable for TestFlight ("signature ... is missing an application
+# identifier but has an application identifier in the provisioning
+# profile", error 90886). Nested binaries don't need these keys — only the
+# outer bundle's identity is checked against the profile.
+outer_entitlements="$work_dir/outer-app.entitlements"
+security cms -D -i "$provisioning_profile" 2>/dev/null | plutil -extract Entitlements xml1 -o "$outer_entitlements" -
+for key in \
+    com.apple.security.app-sandbox \
+    com.apple.security.network.client \
+    com.apple.security.files.user-selected.read-write \
+    com.apple.security.cs.allow-jit \
+    com.apple.security.cs.allow-unsigned-executable-memory \
+    com.apple.security.cs.disable-library-validation \
+    com.apple.security.cs.allow-dyld-environment-variables; do
+    /usr/libexec/PlistBuddy -c "Add :$key bool true" "$outer_entitlements"
+done
 codesign --force --options runtime --timestamp \
-    --entitlements "$entitlements" \
+    --entitlements "$outer_entitlements" \
     --sign "$distribution_identity" "$app_bundle"
 
 echo "verifying signature and sandbox entitlement..."
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
 codesign -d --entitlements :- "$app_bundle" | grep -q "com.apple.security.app-sandbox"
+codesign -d --entitlements :- "$app_bundle" | grep -q "com.apple.application-identifier"
 
 mkdir -p "$artifact_dir"
 rm -f "$pkg_path"
