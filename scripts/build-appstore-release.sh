@@ -71,6 +71,13 @@ info_plist="$app_bundle/Contents/Info.plist"
 echo "embedding provisioning profile..."
 cp "$provisioning_profile" "$app_bundle/Contents/embedded.provisionprofile"
 
+# cp preserves extended attributes, so a provisioning profile downloaded
+# through a browser carries its com.apple.quarantine attribute into the
+# bundle. App Store Connect rejects any such attribute anywhere in the
+# package (TMS-91109), so strip it everywhere in the bundle as a blanket
+# safety net rather than assuming only this one file is affected.
+xattr -rd com.apple.quarantine "$app_bundle" 2>/dev/null || true
+
 echo "signing nested Mach-O binaries in the worker payload..."
 # Deepest paths first, same inside-out signing requirement as the Developer
 # ID build — see build-release-app.sh.
